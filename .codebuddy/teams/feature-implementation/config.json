@@ -1,0 +1,18 @@
+{
+  "name": "feature-implementation",
+  "leadAgentId": "28125fe0bf144bb9ba4e892d8507eaf7",
+  "workspacePath": "c:/Users/唐辉/Desktop/Intelligent Cold Chain Logistics Monitoring Platform Based on Deep Learning",
+  "createdAt": "2026-06-02T03:21:25.191Z",
+  "options": {
+    "workspacePath": "c:/Users/唐辉/Desktop/Intelligent Cold Chain Logistics Monitoring Platform Based on Deep Learning",
+    "isAutoTeam": false
+  },
+  "members": [
+    {
+      "memberId": "team-lead@feature-implementation",
+      "name": "team-lead",
+      "role": "Team Lead - coordinates the team and interacts with the user"
+    }
+  ],
+  "isAutoTeam": false
+}

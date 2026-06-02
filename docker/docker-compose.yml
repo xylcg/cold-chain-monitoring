@@ -1,0 +1,169 @@
+# ============================================
+# 冷链物流智能监控平台 - 纯 Docker 部署
+# ============================================
+# 启动:  docker compose up -d
+# 停止:  docker compose down
+# 重构:  docker compose up -d --build
+# ============================================
+
+services:
+  # ========================================
+  # TDengine - 时序数据库
+  # ========================================
+  taos:
+    image: tdengine/tdengine:3.0.7.1
+    container_name: coldchain-tdengine
+    environment:
+      - TAOS_FQDN=taos
+    volumes:
+      - taos_data:/var/lib/taos
+      - taos_log:/var/log/taos
+    networks:
+      - coldchain-net
+    restart: unless-stopped
+
+  # ========================================
+  # PostgreSQL - 业务数据库
+  # ========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: coldchain-postgres
+    environment:
+      POSTGRES_DB: coldchain
+      POSTGRES_USER: coldchain
+      POSTGRES_PASSWORD: coldchain123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-postgres.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - coldchain-net
+    restart: unless-stopped
+
+  # ========================================
+  # Redis - 缓存与实时数据
+  # ========================================
+  redis:
+    image: redis:7-alpine
+    container_name: coldchain-redis
+    command: redis-server --appendonly yes --requirepass coldchain123
+    volumes:
+      - redis_data:/data
+    networks:
+      - coldchain-net
+    restart: unless-stopped
+
+  # ========================================
+  # Kafka - 消息队列
+  # ========================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: coldchain-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - coldchain-net
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: coldchain-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - coldchain-net
+    restart: unless-stopped
+
+  # ========================================
+  # 后端 - FastAPI
+  # ========================================
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: coldchain-backend
+    depends_on:
+      - postgres
+      - redis
+      - taos
+    environment:
+      # 应用配置
+      APP_NAME: "冷链物流智能监控平台"
+      APP_VERSION: "1.0.0"
+      DEBUG: "true"
+      SECRET_KEY: "cold-chain-secret-key-change-in-production-2026"
+      ALGORITHM: "HS256"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "480"
+      # TDengine
+      TDENGINE_HOST: taos
+      TDENGINE_PORT: "6041"
+      TDENGINE_USER: root
+      TDENGINE_PASSWORD: taosdata
+      TDENGINE_DATABASE: coldchain
+      # PostgreSQL
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: coldchain
+      POSTGRES_USER: coldchain
+      POSTGRES_PASSWORD: coldchain123
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: coldchain123
+      REDIS_DB: "0"
+      # Kafka
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_SENSOR_TOPIC: coldchain_sensor_data
+      KAFKA_ALERT_TOPIC: coldchain_alerts
+      KAFKA_PREDICTION_TOPIC: coldchain_predictions
+    volumes:
+      - ../models:/models
+    networks:
+      - coldchain-net
+    restart: unless-stopped
+
+  # ========================================
+  # 前端 - Vue3 + Nginx
+  # ========================================
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    container_name: coldchain-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - coldchain-net
+    restart: unless-stopped
+
+  # ========================================
+  # 模拟器 - 传感器数据生成
+  # ========================================
+  simulator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.simulator
+    container_name: coldchain-simulator
+    depends_on:
+      - backend
+    networks:
+      - coldchain-net
+    restart: unless-stopped
+
+volumes:
+  taos_data:
+  taos_log:
+  postgres_data:
+  redis_data:
+
+networks:
+  coldchain-net:
+    driver: bridge

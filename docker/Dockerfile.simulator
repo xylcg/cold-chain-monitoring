@@ -1,0 +1,16 @@
+# ============================================
+# 冷链物流平台 - 传感器数据模拟器
+# ============================================
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# 安装依赖（不需要torch，轻量化）
+RUN pip install --no-cache-dir requests
+
+# 复制模拟器和模型代码
+COPY simulator/ /app/simulator/
+COPY models/ /app/models/
+
+# 等待后端就绪后启动模拟器
+CMD ["bash", "-c", "echo '[模拟器] 等待后端就绪...' && for i in $(seq 1 60); do if python -c \"import urllib.request; urllib.request.urlopen('http://backend:8000/health', timeout=2)\" 2>/dev/null; then break; fi; echo \"  等待中... ($i/60)\"; sleep 3; done && echo '[模拟器] 后端就绪，启动数据生成...' && python /app/simulator/sensor_simulator.py --vehicles 100 --cold-rooms 10 --interval 10 --anomaly-prob 0.03 --api-url http://backend:8000/api/v1/sensors/data"]
