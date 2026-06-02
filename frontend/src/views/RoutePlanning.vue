@@ -207,10 +207,11 @@ onMounted(async () => {
 
 .form-group { margin-bottom:12px; }
 .form-group label { display:block; font-size:12px; color:var(--text-muted); margin-bottom:4px; font-weight:500; }
-.select-input { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; background:var(--bg-card); color:var(--text-primary); font-size:13px; }
-.radio-group { display:flex; flex-direction:column; gap:4px; }
-.radio { font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px; color:var(--text-secondary); }
-.radio input { accent-color:var(--accent); }
+.select-input { width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; background:var(--bg-card); color:var(--text-primary); font-size:13px; appearance:auto; -webkit-appearance:menulist; height:36px; line-height:20px; cursor:pointer; }
+.select-input option { background:var(--bg-card); color:var(--text-primary); }
+.radio-group { display:flex; flex-direction:column; gap:6px; }
+.radio { font-size:13px; cursor:pointer; display:flex; align-items:center; gap:8px; color:var(--text-secondary); }
+.radio input[type="radio"] { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
 
 .btn { padding:8px 18px; border-radius:6px; font-size:13px; cursor:pointer; border:1px solid var(--border); background:var(--bg-card); color:var(--text-secondary); transition:all .2s; }
 .btn-primary { background:linear-gradient(135deg,var(--accent),var(--aurora)); color:#fff; border:none; }
