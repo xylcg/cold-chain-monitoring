@@ -60,9 +60,9 @@
   --text-inverse: #ffffff;
 
   /* 字体 */
-  --font-display: 'Orbitron', monospace;
-  --font-mono: 'JetBrains Mono', monospace;
-  --font-body: 'Outfit', 'Noto Sans SC', sans-serif;
+  --font-display: 'DIN Alternate', 'Arial', monospace;
+  --font-mono: 'Consolas', 'Courier New', monospace;
+  --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 
   /* 间距/圆角 */
   --radius-sm: 6px;

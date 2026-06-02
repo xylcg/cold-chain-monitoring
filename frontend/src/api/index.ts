@@ -145,6 +145,16 @@ export const qualityAPI = {
   getProducts: () => api.get('/quality/products'),
 }
 
+export const uploadAPI = {
+  uploadTempRecord: (formData: FormData) =>
+    api.post('/upload/temperature-record', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 30000,
+    }),
+  getTempRecords: (deviceId?: string, waybillId?: string, limit?: number) =>
+    api.get('/upload/temperature-records', { params: { device_id: deviceId, waybill_id: waybillId, limit } }),
+}
+
 export const resourceAPI = {
   getWarehouses: () => api.get('/resources/warehouses'),
   getWarehouseDetail: (id: string) => api.get(`/resources/warehouses/${id}`),

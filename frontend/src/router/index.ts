@@ -100,15 +100,14 @@ const router = createRouter({
           component: () => import('@/views/ResourceManagement.vue'),
           meta: { title: '资源调度' },
         },
-        {
-          path: '  ],
-},
-{
-  path: '/mobile',
-  name: 'MobileApp',
-  component: () => import('@/views/MobileApp.vue'),
-  meta: { title: '移动端冷链监控' },
-},
+      ],
+    },
+    {
+      path: '/mobile',
+      name: 'MobileApp',
+      component: () => import('@/views/MobileApp.vue'),
+      meta: { title: '移动端冷链监控' },
+    },
   ],
 })
 

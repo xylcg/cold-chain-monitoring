@@ -4,12 +4,14 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 from loguru import logger
 
 from .core.config import get_settings
 from .services.redis_service import redis_service
 from .services.tdengine_service import tdengine_service
-from .api import sensors, alerts, temperature, dashboard, auth, websocket, geofence, traceability, customer, vehicles, maintenance, route_planning, dispatch, quality, resources
+from .api import sensors, alerts, temperature, dashboard, auth, websocket, geofence, traceability, customer, vehicles, maintenance, route_planning, dispatch, quality, resources, upload
 
 settings = get_settings()
 
@@ -102,6 +104,12 @@ app.include_router(route_planning.router)
 app.include_router(dispatch.router)
 app.include_router(quality.router)
 app.include_router(resources.router)
+app.include_router(upload.router)
+
+# 静态文件服务 - 上传的图片
+uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 
 @app.get("/")
