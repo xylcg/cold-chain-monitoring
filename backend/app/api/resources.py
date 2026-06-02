@@ -7,6 +7,7 @@
 - 资源利用统计
 """
 import random
+import math
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -251,40 +252,103 @@ async def get_resource_utilization(
 async def allocate_resource(
     resource_type: str = Query(..., description="资源类型: warehouse_slot/vehicle/cold_plate"),
     warehouse_id: Optional[str] = Query(None),
+    quantity: int = 1,
     user: dict = Depends(get_current_user),
 ):
-    """模拟资源分配"""
+    """智能资源分配（基于利用率 + 距离优先）"""
     if resource_type == "warehouse_slot":
         wh = next((w for w in WAREHOUSES if w["id"] == warehouse_id), None)
         if not wh:
-            raise HTTPException(status_code=404, detail="冷库不存在")
-        util = _get_warehouse_utilization(warehouse_id)
-        slot = random.choice(["frozen", "refrigerated", "ambient"])
+            # 自动选择利用率最低的冷库
+            wh_utils = [(w, _get_warehouse_utilization(w["id"])) for w in WAREHOUSES]
+            wh_utils.sort(key=lambda x: x[1]["overall_utilization"])
+            wh, util = wh_utils[0]
+        else:
+            util = _get_warehouse_utilization(warehouse_id)
+
+        # 选择最空闲的温区
+        slots = util["slots"]
+        best_slot = min(slots.keys(), key=lambda s: slots[s]["rate"])
+        remaining = slots[best_slot]["total"] - slots[best_slot]["used"]
+        if remaining < quantity * 5:
+            raise HTTPException(status_code=400, detail=f"{best_slot}区剩余库位不足")
+
         return {
             "status": "success",
-            "message": f"已分配{warehouse_id} {slot}区库位",
-            "assigned_slot": slot,
-            "remaining_slots": util["slots"][slot]["total"] - util["slots"][slot]["used"],
+            "message": f"已分配{wh['name']} {best_slot}区 {quantity * 5}个库位",
+            "warehouse": wh["name"],
+            "assigned_zone": best_slot,
+            "quantity": quantity * 5,
+            "remaining_slots": remaining - quantity * 5,
+            "warehouse_utilization": util["overall_utilization"],
         }
 
     elif resource_type == "vehicle":
         available = [v for v in FLEET_VEHICLES if v["status"] == "available"]
         if not available:
             raise HTTPException(status_code=400, detail="无可用车辆")
-        assigned = random.choice(available)
+        # 按容量优先分配
+        available.sort(key=lambda v: -v["capacity_kg"])
+        assigned = available[0]
         return {
             "status": "success",
-            "message": f"已分配车辆 {assigned['plate']} ({assigned['type']})",
+            "message": f"已分配车辆 {assigned['plate']} ({assigned['type']}, {assigned['capacity_kg']}kg)",
             "assigned_vehicle": assigned,
+            "remaining_available": len(available) - 1,
         }
 
     elif resource_type == "cold_plate":
-        cp = random.choice(COLD_PLATES)
+        # 根据温区需求分配
+        demand_temp = -18 if random.random() < 0.3 else 0  # 模拟温区需求
+        matching = [cp for cp in COLD_PLATES if abs(cp["phase_change_temp_c"] - demand_temp) < 10]
+        if not matching:
+            cp = random.choice(COLD_PLATES)
+        else:
+            cp = matching[0]
+        allocate_qty = min(quantity * 10, cp["stock"] - cp["in_use"])
+        if allocate_qty <= 0:
+            raise HTTPException(status_code=400, detail=f"{cp['name']}库存不足")
         return {
             "status": "success",
-            "message": f"已分配{cp['name']} ({cp['type']}) x 10块",
+            "message": f"已分配{cp['name']} ({cp['type']}) x {allocate_qty}块",
             "assigned_plate": cp["name"],
-            "remaining_stock": cp["stock"] - cp["in_use"] - 10,
+            "quantity": allocate_qty,
+            "demand_temp_c": demand_temp,
+            "remaining_stock": cp["stock"] - cp["in_use"] - allocate_qty,
         }
     else:
         raise HTTPException(status_code=400, detail=f"不支持的资源类型: {resource_type}")
+
+
+@router.get("/forecast")
+async def get_resource_forecast(
+    hours_ahead: int = 24,
+    user: dict = Depends(get_current_user),
+):
+    """冷链资源需求预测（未来24小时）"""
+    random.seed(datetime.utcnow().hour)
+    forecast = []
+    now = datetime.utcnow()
+    for i in range(hours_ahead):
+        hour = (now + timedelta(hours=i)).hour
+        # 模拟昼夜需求波动（三角函数）
+        base_demand = 60 + 20 * math.sin((hour - 6) * math.pi / 12)
+        forecast.append({
+            "time": (now + timedelta(hours=i)).strftime("%H:00"),
+            "warehouse_demand": round(base_demand + random.uniform(-5, 10), 0),
+            "vehicle_demand": round(base_demand * 0.3 + random.uniform(-2, 5), 0),
+            "cold_plate_demand": round(base_demand * 0.5 + random.uniform(-3, 8), 0),
+        })
+
+    total_wh_capacity = sum(w["total_slots"] for w in WAREHOUSES)
+    total_vehicles = len(FLEET_VEHICLES)
+    total_plates = sum(cp["stock"] for cp in COLD_PLATES)
+
+    return {
+        "forecast_hours": hours_ahead,
+        "total_warehouse_capacity": total_wh_capacity,
+        "total_vehicle_fleet": total_vehicles,
+        "total_cold_plate_stock": total_plates,
+        "peak_demand_hour": max(forecast, key=lambda f: f["warehouse_demand"])["time"],
+        "forecast_data": forecast,
+    }

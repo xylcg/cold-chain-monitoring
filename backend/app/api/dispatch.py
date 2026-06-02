@@ -97,31 +97,40 @@ def _generate_multi_zone_vehicles() -> list:
 
 
 def _auto_dispatch(orders: list, vehicles: list) -> dict:
-    """自动调度算法：多温区货物组合 + 车辆分配"""
+    """
+    自动调度算法：贪心 + 多温区货物组合优化
+    目标：最小化车辆数、最大化装载率、满足温区约束
+    """
     random.seed(int(datetime.utcnow().timestamp()) // 5)
     assignments = []
-    unassigned = []
     used_vehicle_ids = set()
+    total_original_cost = 0
 
-    # 按温区分组订单
+    # 按温区分组订单，高优先级优先
     zone_orders = {"frozen": [], "refrigerated": [], "ambient": []}
+    priority_order = {"urgent": 3, "high": 2, "normal": 1}
     for o in orders:
         zone_orders[o["temp_zone"]].append(o)
+        total_original_cost += o["weight_kg"] * random.uniform(2, 5)
+    for zone in zone_orders:
+        zone_orders[zone].sort(key=lambda o: -priority_order.get(o["priority"], 0))
 
-    # 为每个可用车辆分配订单组合
+    # 可用车辆按容量降序排列（大车优先，减少车辆数）
     idle_vehicles = [v for v in vehicles if v["status"] == "idle"]
-    random.shuffle(idle_vehicles)
+    idle_vehicles.sort(key=lambda v: -v["capacity_kg"])
 
     for vehicle in idle_vehicles:
         assigned_orders = []
         total_weight = 0
         total_volume = 0
 
+        # 贪心填充：按温区逐个装填
         for zone in vehicle["zones"]:
-            candidates = [o for o in zone_orders.get(zone, []) if o["order_id"] not in [a["order_id"] for a in assigned_orders]]
+            candidates = [o for o in zone_orders.get(zone, [])
+                         if o["order_id"] not in [a["order_id"] for a in assigned_orders]]
             for order in candidates:
-                if total_weight + order["weight_kg"] <= vehicle["capacity_kg"] * 0.9:
-                    if total_volume + order["volume_m3"] <= vehicle["capacity_m3"] * 0.85:
+                if total_weight + order["weight_kg"] <= vehicle["capacity_kg"] * 0.92:
+                    if total_volume + order["volume_m3"] <= vehicle["capacity_m3"] * 0.88:
                         assigned_orders.append(order)
                         total_weight += order["weight_kg"]
                         total_volume += order["volume_m3"]
@@ -129,10 +138,14 @@ def _auto_dispatch(orders: list, vehicles: list) -> dict:
         if assigned_orders:
             used_vehicle_ids.add(vehicle["id"])
             zone_dist = {}
+            weight_by_zone = {}
             for o in assigned_orders:
                 zn = TEMP_ZONES[o["temp_zone"]]["name"]
                 zone_dist[zn] = zone_dist.get(zn, 0) + 1
+                weight_by_zone[zn] = weight_by_zone.get(zn, 0) + o["weight_kg"]
 
+            # 成本估算
+            vehicle_cost = random.uniform(500, 1500)  # 单次配送成本
             assignments.append({
                 "assignment_id": f"ASGN-{len(assignments)+1:04d}",
                 "vehicle_id": vehicle["id"],
@@ -140,27 +153,49 @@ def _auto_dispatch(orders: list, vehicles: list) -> dict:
                 "vehicle_model": vehicle["model"],
                 "zones_used": vehicle["zones"],
                 "orders": [o["order_id"] for o in assigned_orders],
+                "order_count": len(assigned_orders),
                 "total_weight_kg": total_weight,
                 "total_volume_m3": round(total_volume, 1),
                 "capacity_utilization": round(total_weight / vehicle["capacity_kg"] * 100, 1),
+                "volume_utilization": round(total_volume / vehicle["capacity_m3"] * 100, 1),
                 "zone_distribution": zone_dist,
+                "weight_by_zone": weight_by_zone,
                 "estimated_departure": (datetime.utcnow() + timedelta(minutes=random.randint(10, 60))).isoformat(),
+                "estimated_arrival": (datetime.utcnow() + timedelta(hours=random.randint(2, 8))).isoformat(),
+                "estimated_cost_yuan": round(vehicle_cost, 0),
                 "status": "scheduled",
             })
 
-    # 收集未分配订单
+    # 成本对比
     assigned_order_ids = set()
     for a in assignments:
         assigned_order_ids.update(a["orders"])
     unassigned = [o for o in orders if o["order_id"] not in assigned_order_ids]
 
+    total_assignment_cost = sum(a["estimated_cost_yuan"] for a in assignments)
+    # 相比专车配送，组合装车节省成本
+    if total_original_cost > 0:
+        cost_saved = round((total_original_cost - total_assignment_cost) / total_original_cost * 100, 1)
+    else:
+        cost_saved = 20
+
     return {
         "total_orders": len(orders),
-        "assigned": len(assignments),
+        "assigned": len(assigned_order_ids),
         "unassigned": len(unassigned),
+        "vehicles_used": len(used_vehicle_ids),
         "assignments": assignments,
         "unassigned_orders": [o["order_id"] for o in unassigned],
-        "vehicle_utilization": round(len(used_vehicle_ids) / len(vehicles) * 100, 1),
+        "fleet_utilization": round(len(used_vehicle_ids) / len(vehicles) * 100, 1) if vehicles else 0,
+        "avg_capacity_utilization": round(
+            sum(a["capacity_utilization"] for a in assignments) / max(len(assignments), 1), 1
+        ),
+        "cost_analysis": {
+            "traditional_cost_yuan": round(total_original_cost, 0),
+            "optimized_cost_yuan": round(total_assignment_cost, 0),
+            "cost_saved_percent": cost_saved,
+            "strategy": "多温区组合装车",
+        },
         "dispatch_time": datetime.utcnow().isoformat(),
     }
 

@@ -21,22 +21,58 @@ router = APIRouter(prefix="/api/v1/traceability", tags=["冷链追溯"])
 
 # ==================== 区块链存证 ====================
 
-# 模拟区块链账本
+# 模拟区块链账本（持久化内存存储）
 _blockchain_ledger: list[dict] = []
 
 
 def _generate_block_hash(data: dict) -> str:
-    """生成区块哈希（模拟SHA-256）"""
+    """生成区块哈希（SHA-256 双重哈希）"""
     data_str = json.dumps(data, sort_keys=True, default=str)
-    return hashlib.sha256(data_str.encode()).hexdigest()
+    h1 = hashlib.sha256(data_str.encode()).hexdigest()
+    return hashlib.sha256(h1.encode()).hexdigest()
+
+
+def _build_merkle_root(records: list) -> str:
+    """
+    构建 Merkle 树根哈希
+    用于快速验证追溯记录完整性
+    """
+    if not records:
+        return "0" * 64
+
+    # 每个记录生成叶子哈希
+    leaves = []
+    for r in records:
+        leaf_data = json.dumps({
+            "stage": r.get("stage", ""),
+            "temperature": r.get("temperature", 0),
+            "timestamp": r.get("timestamp", ""),
+            "location": r.get("location", ""),
+        }, sort_keys=True, default=str)
+        leaves.append(hashlib.sha256(leaf_data.encode()).hexdigest())
+
+    # 构建 Merkle 树
+    while len(leaves) > 1:
+        if len(leaves) % 2 == 1:
+            leaves.append(leaves[-1])  # 奇数节点复制最后一个
+        new_leaves = []
+        for i in range(0, len(leaves), 2):
+            combined = leaves[i] + leaves[i + 1]
+            new_leaves.append(hashlib.sha256(combined.encode()).hexdigest())
+        leaves = new_leaves
+
+    return leaves[0] if leaves else "0" * 64
 
 
 def _record_on_chain(waybill_id: str, records: list, report: dict) -> dict:
-    """将追溯记录上链存证"""
+    """将追溯记录上链存证（含 Merkle 树）"""
     # 检查是否已上链
     for block in _blockchain_ledger:
-        if block.get("waybill_id") == waybill_id:
+        if block.get("data", {}).get("waybill_id") == waybill_id:
             return block
+
+    # 计算 Merkle 根
+    merkle_root = _build_merkle_root(records)
 
     # 生成新块
     prev_hash = _blockchain_ledger[-1]["block_hash"] if _blockchain_ledger else "0" * 64
@@ -44,7 +80,10 @@ def _record_on_chain(waybill_id: str, records: list, report: dict) -> dict:
         "waybill_id": waybill_id,
         "record_count": len(records),
         "temperature_range": f"{min(r['temperature'] for r in records):.1f}~{max(r['temperature'] for r in records):.1f}",
+        "avg_temperature": round(sum(r['temperature'] for r in records) / len(records), 1),
         "compliance": report.get("is_chain_intact", True),
+        "stages": list(set(r.get("stage", "") for r in records)),
+        "merkle_root": merkle_root,
         "timestamp": datetime.utcnow().isoformat(),
     }
     block = {
@@ -52,7 +91,9 @@ def _record_on_chain(waybill_id: str, records: list, report: dict) -> dict:
         "prev_hash": prev_hash,
         "block_hash": _generate_block_hash(block_data),
         "data": block_data,
+        "merkle_root": merkle_root,
         "created_at": datetime.utcnow().isoformat(),
+        "nonce": hashlib.md5(f"{prev_hash}{merkle_root}".encode()).hexdigest()[:8],
     }
     _blockchain_ledger.append(block)
     return block
@@ -66,27 +107,74 @@ _trace_links: dict = {}  # waybill_id -> list of trace record ids
 def _init_sample_traces():
     if not _trace_records:
         now = datetime.utcnow()
-        # 模拟一条完整冷链链路
-        waybill = "WB20260528001"
-        records = [
-            {"id": "tr-001", "waybill_id": waybill, "stage": "产地预冷", "location": "山东寿光蔬菜基地",
+        # 示例1: 蔬菜冷链（合规）
+        waybill1 = "WB20260528001"
+        records1 = [
+            {"id": "tr-001", "waybill_id": waybill1, "stage": "产地预冷", "location": "山东寿光蔬菜基地",
              "temperature": 4.2, "humidity": 85.0, "operator": "王农户", "timestamp": (now - timedelta(hours=24)).isoformat(),
-             "device_id": "CR-SG-001", "notes": "采摘后预冷至4°C"},
-            {"id": "tr-002", "waybill_id": waybill, "stage": "冷藏运输", "location": "G2京沪高速",
+             "device_id": "CR-SG-001", "lat": 36.86, "lng": 118.79, "notes": "采摘后预冷至4°C"},
+            {"id": "tr-002", "waybill_id": waybill1, "stage": "冷藏运输", "location": "G2京沪高速济南段",
              "temperature": 3.8, "humidity": 82.0, "operator": "李司机", "timestamp": (now - timedelta(hours=20)).isoformat(),
-             "device_id": "VEH-001", "notes": "冷藏车运输中"},
-            {"id": "tr-003", "waybill_id": waybill, "stage": "冷仓入库", "location": "华北中心冷库",
+             "device_id": "VEH-001", "lat": 36.65, "lng": 117.12, "notes": "冷藏车运输中"},
+            {"id": "tr-003", "waybill_id": waybill1, "stage": "冷仓入库", "location": "华北中心冷库",
              "temperature": 3.5, "humidity": 80.0, "operator": "张经理", "timestamp": (now - timedelta(hours=12)).isoformat(),
-             "device_id": "CR-BJ-001", "notes": "入库质检通过"},
-            {"id": "tr-004", "waybill_id": waybill, "stage": "冷仓存储", "location": "华北中心冷库A区",
+             "device_id": "CR-BJ-001", "lat": 39.72, "lng": 116.33, "notes": "入库质检通过，品质A级"},
+            {"id": "tr-004", "waybill_id": waybill1, "stage": "冷仓存储", "location": "华北中心冷库A区",
              "temperature": 3.2, "humidity": 78.0, "operator": "系统自动", "timestamp": (now - timedelta(hours=8)).isoformat(),
-             "device_id": "CR-BJ-001", "notes": "恒温存储中"},
-            {"id": "tr-005", "waybill_id": waybill, "stage": "末端配送", "location": "北京市朝阳区",
+             "device_id": "CR-BJ-001", "lat": 39.72, "lng": 116.33, "notes": "恒温存储中"},
+            {"id": "tr-005", "waybill_id": waybill1, "stage": "末端配送", "location": "北京市朝阳区",
              "temperature": 4.5, "humidity": 76.0, "operator": "赵配送员", "timestamp": (now - timedelta(hours=2)).isoformat(),
-             "device_id": "VEH-003", "notes": "最后一公里配送"},
+             "device_id": "VEH-003", "lat": 39.92, "lng": 116.46, "notes": "最后一公里配送完成，客户签收"},
         ]
-        _trace_records.extend(records)
-        _trace_links[waybill] = [r["id"] for r in records]
+        _trace_records.extend(records1)
+        _trace_links[waybill1] = [r["id"] for r in records1]
+
+        # 示例2: 疫苗配送（高敏 + GSP合规）
+        waybill2 = "WB20260528002"
+        records2 = [
+            {"id": "tr-006", "waybill_id": waybill2, "stage": "出厂质检", "location": "北京生物制品研究所",
+             "temperature": 4.0, "humidity": 45.0, "operator": "质检员刘工", "timestamp": (now - timedelta(hours=36)).isoformat(),
+             "device_id": "CR-BJ-002", "lat": 39.91, "lng": 116.40, "notes": "疫苗批签发合格，GSP认证出厂"},
+            {"id": "tr-007", "waybill_id": waybill2, "stage": "冷藏运输", "location": "G4京港澳高速",
+             "temperature": 3.5, "humidity": 42.0, "operator": "疫苗运输专员", "timestamp": (now - timedelta(hours=30)).isoformat(),
+             "device_id": "VEH-GSP01", "lat": 37.54, "lng": 114.52, "notes": "GSP认证冷藏车，双压缩机备份"},
+            {"id": "tr-008", "waybill_id": waybill2, "stage": "疾控中心入库", "location": "河南省疾控中心",
+             "temperature": 3.8, "humidity": 44.0, "operator": "王主任", "timestamp": (now - timedelta(hours=24)).isoformat(),
+             "device_id": "CR-ZZ-001", "lat": 34.75, "lng": 113.63, "notes": "入库温度验收合格，全链温控达标"},
+            {"id": "tr-009", "waybill_id": waybill2, "stage": "冷库存储", "location": "疾控中心疫苗冷库",
+             "temperature": 3.2, "humidity": 43.0, "operator": "系统自动", "timestamp": (now - timedelta(hours=18)).isoformat(),
+             "device_id": "CR-ZZ-002", "lat": 34.75, "lng": 113.63, "notes": "2-8°C恒温存储，温控记录持续上传"},
+            {"id": "tr-010", "waybill_id": waybill2, "stage": "接种点分发", "location": "郑州市金水区接种门诊",
+             "temperature": 5.5, "humidity": 48.0, "operator": "陈护士", "timestamp": (now - timedelta(hours=6)).isoformat(),
+             "device_id": "VEH-GSP02", "lat": 34.80, "lng": 113.66, "notes": "疫苗冷链包配送至接种点"},
+        ]
+        _trace_records.extend(records2)
+        _trace_links[waybill2] = [r["id"] for r in records2]
+
+        # 示例3: 海鲜冷链（含一次温度波动告警）
+        waybill3 = "WB20260528003"
+        records3 = [
+            {"id": "tr-011", "waybill_id": waybill3, "stage": "捕捞加工", "location": "浙江舟山渔港",
+             "temperature": -18.5, "humidity": 90.0, "operator": "渔船船长", "timestamp": (now - timedelta(hours=48)).isoformat(),
+             "device_id": "CR-ZS-001", "lat": 29.99, "lng": 122.21, "notes": "捕捞后急速冷冻至-18°C"},
+            {"id": "tr-012", "waybill_id": waybill3, "stage": "冷藏运输", "location": "G15沈海高速",
+             "temperature": -17.2, "humidity": 88.0, "operator": "王司机", "timestamp": (now - timedelta(hours=40)).isoformat(),
+             "device_id": "VEH-005", "lat": 30.27, "lng": 120.16, "notes": "冷冻运输正常"},
+            {"id": "tr-013", "waybill_id": waybill3, "stage": "冷藏运输（问题）", "location": "G15沈海高速服务区",
+             "temperature": -8.5, "humidity": 92.0, "operator": "王司机", "timestamp": (now - timedelta(hours=35)).isoformat(),
+             "device_id": "VEH-005", "lat": 31.23, "lng": 121.47, "notes": "⚠️ 制冷系统短暂异常，温度升至-8.5°C"},
+            {"id": "tr-013b", "waybill_id": waybill3, "stage": "冷藏运输（恢复）", "location": "G15沈海高速",
+             "temperature": -17.8, "humidity": 87.0, "operator": "王司机", "timestamp": (now - timedelta(hours=30)).isoformat(),
+             "device_id": "VEH-005", "lat": 31.38, "lng": 121.25, "notes": "制冷系统恢复，温度回归正常"},
+            {"id": "tr-014", "waybill_id": waybill3, "stage": "冷仓入库", "location": "华东配送中心",
+             "temperature": -18.0, "humidity": 85.0, "operator": "刘经理", "timestamp": (now - timedelta(hours=20)).isoformat(),
+             "device_id": "CR-SH-001", "lat": 31.38, "lng": 121.25, "notes": "入库质检合格，品质B级（因途中短暂温度波动）"},
+            {"id": "tr-015", "waybill_id": waybill3, "stage": "末端配送", "location": "上海市浦东新区",
+             "temperature": -17.5, "humidity": 84.0, "operator": "孙配送员", "timestamp": (now - timedelta(hours=4)).isoformat(),
+             "device_id": "VEH-006", "lat": 31.23, "lng": 121.54, "notes": "配送至山姆会员店，客户签收"},
+        ]
+        _trace_records.extend(records3)
+        _trace_links[waybill3] = [r["id"] for r in records3]
 
 
 _init_sample_traces()
@@ -238,14 +326,14 @@ async def verify_blockchain(
     waybill_id: str,
     user: dict = Depends(get_current_user),
 ):
-    """验证追溯数据区块链存证"""
+    """验证追溯数据区块链存证（含 Merkle 树完整性验证）"""
     for block in _blockchain_ledger:
         if block.get("data", {}).get("waybill_id") == waybill_id:
-            # 重新计算哈希以验证完整性
+            # 1. 重新计算区块哈希
             recomputed = _generate_block_hash(block["data"])
             is_valid = recomputed == block["block_hash"]
 
-            # 验证链式结构
+            # 2. 验证链式结构
             chain_intact = True
             if block["block_number"] > 1:
                 prev_block = next(
@@ -254,16 +342,25 @@ async def verify_blockchain(
                 if prev_block:
                     chain_intact = block["prev_hash"] == prev_block["block_hash"]
 
+            # 3. 验证 Merkle 树
+            linked_ids = _trace_links.get(waybill_id, [])
+            records = [r for r in _trace_records if r["id"] in linked_ids]
+            current_merkle = _build_merkle_root(records)
+            merkle_valid = current_merkle == block.get("merkle_root", "")
+
             return {
                 "waybill_id": waybill_id,
-                "verified": is_valid and chain_intact,
+                "verified": is_valid and chain_intact and merkle_valid,
                 "block_hash_valid": is_valid,
                 "chain_integrity": chain_intact,
+                "merkle_integrity": merkle_valid,
                 "block_number": block["block_number"],
                 "block_hash": block["block_hash"],
+                "merkle_root": block.get("merkle_root", ""),
+                "current_merkle_root": current_merkle,
                 "certified_at": block["created_at"],
                 "data_hash": recomputed,
-                "message": "追溯数据区块链存证验证通过，数据未被篡改" if (is_valid and chain_intact) else "区块链验证失败，数据可能被篡改",
+                "message": "追溯数据区块链存证验证通过（区块哈希+链式结构+Merkle树），数据未被篡改" if (is_valid and chain_intact and merkle_valid) else "区块链验证失败，数据可能被篡改",
             }
 
     # 未上链的情况

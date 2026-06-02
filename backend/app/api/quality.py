@@ -6,6 +6,7 @@
 - 入库/出库品质记录
 """
 import random
+import math
 from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
@@ -36,61 +37,113 @@ GRADE_LEVELS = ["S级(特优)", "A级(优)", "B级(良好)", "C级(合格)", "D�
 GRADE_COLORS = {"S级(特优)": "#00d2a0", "A级(优)": "#22c55e", "B级(良好)": "#f59e0b", "C级(合格)": "#f97316", "D级(不合格)": "#ef4444"}
 
 
-def _simulate_cv_assessment(product_key: str, storage_days: int = 0) -> dict:
-    """模拟计算机视觉品质评估（模拟CNN/ResNet推理）"""
+def _arrhenius_decay(storage_days: int, total_days: int, avg_temp: float = 4.0) -> float:
+    """
+    Arrhenius 品质衰减模型
+    Q10 = 2.5 (温度每升高10°C，反应速率增加2.5倍)
+    k = k0 * Q10^((T - Tref)/10)
+    品质保持率 = exp(-k * t)
+    """
+    import math
+    Tref = 4.0  # 基准温度
+    Q10 = 2.5
+    # 基准反应速率（在Tref下，total_days天后品质降到约40%）
+    k0 = -math.log(0.4) / total_days
+    # 实际反应速率
+    k = k0 * (Q10 ** ((avg_temp - Tref) / 10))
+    # 品质保持率
+    quality = math.exp(-k * storage_days)
+    return max(0.02, min(1.0, quality))
+
+
+def _simulate_cv_assessment(product_key: str, storage_days: int = 0,
+                             avg_temp: float = 4.0, temp_shocks: int = 0) -> dict:
+    """
+    模拟计算机视觉品质评估
+    使用 Arrhenius 衰减模型 + ResNet50 CNN 特征提取模拟
+    考虑温度冲击对品质的额外影响
+    """
     product = PRODUCT_CATEGORIES.get(product_key, PRODUCT_CATEGORIES["apple"])
     total_days = product["freshness_days"]
     random.seed(hash(f"{product_key}{storage_days}{datetime.utcnow().hour}") % 10000)
 
-    # 模拟品质衰减曲线
-    remaining_ratio = max(0.05, 1 - (storage_days / total_days) * (0.7 + random.uniform(-0.15, 0.15)))
-    remaining_days = max(0.5, round(total_days * remaining_ratio, 1))
+    # Arrhenius 品质衰减
+    quality_ratio = _arrhenius_decay(storage_days, total_days, avg_temp)
 
-    # 各指标评分
+    # 温度冲击惩罚（每次开门/温度波动 -3% 品质）
+    shock_penalty = temp_shocks * 0.03
+    quality_ratio = max(0.02, quality_ratio - shock_penalty)
+
+    remaining_days = max(0.5, round(total_days * quality_ratio, 1))
+
+    # 各指标评分（考虑品类特性）
     indicators_score = {}
     for ind in product["indicators"]:
-        base = remaining_ratio * 80 + random.uniform(10, 25)
-        indicators_score[ind] = round(min(100, max(5, base + random.uniform(-8, 8))), 1)
+        if ind in ("色泽", "表皮完整度", "眼清度"):
+            base = quality_ratio * 75 + random.uniform(15, 28)
+        elif ind in ("硬度", "弹性"):
+            base = quality_ratio * 70 + random.uniform(18, 30)
+        elif ind in ("糖度", "成熟度"):
+            base = quality_ratio * 60 + random.uniform(25, 40)
+        elif ind in ("水分", "pH值"):
+            base = quality_ratio * 65 + random.uniform(20, 35)
+        elif ind in ("腐烂率", "黑变率", "黄叶率", "萎蔫程度", "脱粒率", "乳清分离"):
+            base = quality_ratio * 85 + random.uniform(5, 15)
+        elif ind in ("菌落数", "挥发性盐基氮", "酸度"):
+            base = quality_ratio * 55 + random.uniform(20, 40)
+        else:
+            base = quality_ratio * 70 + random.uniform(15, 30)
+        indicators_score[ind] = round(min(100, max(5, base + random.uniform(-5, 5))), 1)
 
     # 综合品质评分
     overall_score = round(sum(indicators_score.values()) / len(indicators_score), 1)
 
-    # 分级
+    # 分级（5级制）
     if overall_score >= 90:
-        grade_idx = 0
+        grade_idx, grade = 0, GRADE_LEVELS[0]
     elif overall_score >= 78:
-        grade_idx = 1
+        grade_idx, grade = 1, GRADE_LEVELS[1]
     elif overall_score >= 60:
-        grade_idx = 2
+        grade_idx, grade = 2, GRADE_LEVELS[2]
     elif overall_score >= 40:
-        grade_idx = 3
+        grade_idx, grade = 3, GRADE_LEVELS[3]
     else:
-        grade_idx = 4
+        grade_idx, grade = 4, GRADE_LEVELS[4]
 
-    grade = GRADE_LEVELS[grade_idx]
-    confidence = round(random.uniform(0.88, 0.99), 3)  # 模型置信度
+    confidence = round(random.uniform(0.88, 0.99), 3)
+
+    # 缺陷检测
+    defect_detected = overall_score < 70
+    defect_pool = {
+        "水果": ["表面褐变", "机械损伤", "霉斑", "冻伤痕迹", "虫蛀孔洞"],
+        "蔬菜": ["叶片黄化", "萎蔫脱水", "机械压伤", "腐烂斑点"],
+        "肉类": ["表面变色", "脂肪氧化", "肉质软化", "异味产生"],
+        "海鲜": ["眼球浑浊", "鳃部变色", "鳞片脱落", "弹性下降"],
+        "乳制品": ["乳清分离", "酸味异常", "菌落超标", "质地结块"],
+    }
+    cat_defects = defect_pool.get(product["category"], ["品质异常"])
+    defect_count = min(2, max(0, int((70 - overall_score) / 15 + random.randint(0, 1))))
+    defect_details = random.sample(cat_defects, defect_count) if defect_detected and defect_count > 0 else []
 
     return {
         "product_type": product["name"],
         "category": product["category"],
         "assessment_id": f"QA-{datetime.utcnow().strftime('%Y%m%d%H%M')}-{random.randint(100, 999)}",
         "storage_days": storage_days,
+        "storage_avg_temp_c": avg_temp,
+        "temp_shocks": temp_shocks,
         "overall_score": overall_score,
         "grade": grade,
         "grade_color": GRADE_COLORS[grade],
         "remaining_shelf_life_days": remaining_days,
-        "remaining_ratio_percent": round(remaining_ratio * 100, 1),
+        "remaining_ratio_percent": round(quality_ratio * 100, 1),
+        "quality_decay_model": "Arrhenius Q10=2.5",
+        "base_decay_rate": f"{round(-math.log(max(quality_ratio, 0.001)) / max(storage_days, 1), 4)} /day",
         "model_confidence": confidence,
-        "model_used": "ResNet50-CNN + Vision Transformer",
+        "model_used": "ResNet50-CNN + Vision Transformer (CV)",
         "indicators": indicators_score,
-        "defect_detected": overall_score < 70,
-        "defect_details": (
-            [
-                random.choice(["表面褐变", "机械损伤", "霉斑", "冻伤痕迹"]),
-                random.choice(["轻微脱水", "颜色异常", "质地软化"])
-            ][:random.randint(0, 2)]
-            if overall_score < 70 else []
-        ),
+        "defect_detected": defect_detected,
+        "defect_details": defect_details,
         "assessed_at": datetime.utcnow().isoformat(),
         "recommendation": _get_recommendation(grade),
     }
@@ -145,6 +198,8 @@ def _generate_batches() -> list:
 class AssessRequest(BaseModel):
     product_type: str  # 品类key，如 "apple", "strawberry"
     storage_days: int = 0
+    avg_temp: float = 4.0  # 平均储存温度
+    temp_shocks: int = 0  # 温度冲击次数（开门次数等）
 
 @router.post("/assess")
 async def assess_quality(
@@ -167,7 +222,10 @@ async def assess_quality(
     if request.storage_days > product["freshness_days"] * 1.5:
         return {"status": "error", "detail": f"储存天数超出{product['name']}最大保鲜期的150%"}
 
-    result = _simulate_cv_assessment(request.product_type, request.storage_days)
+    result = _simulate_cv_assessment(
+        request.product_type, request.storage_days,
+        avg_temp=request.avg_temp, temp_shocks=request.temp_shocks
+    )
     result["max_freshness_days"] = product["freshness_days"]
     return result
 

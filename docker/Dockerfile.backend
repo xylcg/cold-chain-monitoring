@@ -15,6 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制后端代码
 COPY backend/ .
 
+# 复制模型文件（NumPy 模型，无需 PyTorch）
+COPY models/ /models/
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

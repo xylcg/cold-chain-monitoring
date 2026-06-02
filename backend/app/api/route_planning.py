@@ -119,17 +119,27 @@ def _plan_routes(origin: str, destination: str, cargo_type: str, priority: str) 
         energy_cost = distance * energy_per_km * (1 + cooling_load)
         fuel_cost = energy_cost * random.uniform(6.5, 8.0)  # 柴油/电费 ¥/kWh
 
+        # 碳排放计算（柴油: 0.00268吨CO2/kWh, 电动: 0.0005吨CO2/kWh由电网排放）
+        diesel_co2_factor = 0.00268  # 吨CO2/kWh
+        carbon_emission = distance * 0.78 * diesel_co2_factor + energy_cost * 0.3 * diesel_co2_factor
+
+        # 温度偏离影响（冷链品质损失）
+        temp_deviation = abs(avg_temp - 4.0)  # 理想冷链4°C
+        quality_loss_rate = temp_deviation * 0.015 * (duration / 24)
+
         # 多目标评分
         time_score = 100 - (duration / max(direct_distance / 50, 1)) * 40  # 时效
         cost_score = 100 - fuel_cost * 0.05  # 成本
-        quality_score = 100 - cooling_load * 50  # 品质保障
+        quality_score = 100 - cooling_load * 50 - quality_loss_rate * 30  # 品质保障
+        eco_score = 100 - carbon_emission * 50  # 环保评分
 
         # 温敏货物加权
         priority_weight = cargo_req["priority_weight"]
         composite_score = (
-            time_score * (0.5 * priority_weight) +
-            cost_score * (0.3 / priority_weight) +
-            quality_score * (0.2 * priority_weight)
+            time_score * (0.35 * priority_weight) +
+            cost_score * (0.25 / priority_weight) +
+            quality_score * (0.25 * priority_weight) +
+            eco_score * (0.15 / priority_weight)
         )
 
         # 途经城市
@@ -154,11 +164,13 @@ def _plan_routes(origin: str, destination: str, cargo_type: str, priority: str) 
             "energy_consumption_kwh": round(energy_cost, 1),
             "congestion_level": congestion_level,
             "composite_score": round(composite_score, 1),
-            "carbon_emission_kg": round(distance * 0.78, 1),  # 柴油车碳排放
+            "carbon_emission_kg": round(carbon_emission * 1000, 1),
+            "quality_loss_percent": round(quality_loss_rate * 100, 2),
             "scores": {
                 "时效评分": round(time_score, 1),
                 "成本评分": round(cost_score, 1),
                 "品质保障评分": round(quality_score, 1),
+                "环保评分": round(eco_score, 1),
             },
         })
 

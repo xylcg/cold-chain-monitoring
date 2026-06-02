@@ -26,9 +26,14 @@ try:
 except ImportError:
     pass
 
+# NumPy 模型始终可用（无需 PyTorch 依赖）
+_NUMPY_MODELS_AVAILABLE = True
+
 # 模型实例（延迟加载）
 _anomaly_detector = None
 _temperature_predictor = None
+_numpy_anomaly_detector = None
+_numpy_temperature_predictor = None
 
 
 @dataclass
@@ -75,12 +80,60 @@ def get_anomaly_detector():
     return _anomaly_detector
 
 
+def get_numpy_anomaly_detector():
+    """获取 NumPy 异常检测器（无需 PyTorch）"""
+    global _numpy_anomaly_detector
+    if _numpy_anomaly_detector is None:
+        try:
+            from numpy_anomaly_detector import NumpyAnomalyDetector, generate_training_data
+            model_path = os.path.join(_MODELS_DIR, "lstm_anomaly_detector_np.pkl")
+            _numpy_anomaly_detector = NumpyAnomalyDetector(
+                input_dim=5, window_size=60, threshold_percentile=99.0,
+                model_path=model_path if os.path.exists(model_path) else None,
+            )
+            # 首次加载时训练并保存
+            if not os.path.exists(model_path):
+                train_data = generate_training_data(5000)
+                _numpy_anomaly_detector.train(train_data, epochs=10)
+                _numpy_anomaly_detector.save(model_path)
+                logger.info("[模型服务] NumPy异常检测器训练完成并保存")
+            logger.info("[模型服务] NumPy异常检测器已加载")
+        except Exception as e:
+            logger.warning(f"[模型服务] NumPy异常检测器加载失败: {e}")
+            _numpy_anomaly_detector = None
+    return _numpy_anomaly_detector
+
+
+def get_numpy_temperature_predictor():
+    """获取 NumPy 温度预测器（无需 PyTorch）"""
+    global _numpy_temperature_predictor
+    if _numpy_temperature_predictor is None:
+        try:
+            from numpy_temperature_predictor import NumpyTemperaturePredictor, generate_temperature_data
+            model_path = os.path.join(_MODELS_DIR, "temperature_predictor_np.pkl")
+            _numpy_temperature_predictor = NumpyTemperaturePredictor(
+                input_dim=6, window_size=60, horizon=30,
+                model_path=model_path if os.path.exists(model_path) else None,
+            )
+            # 首次加载时训练并保存
+            if not os.path.exists(model_path):
+                train_data = generate_temperature_data(5000)
+                _numpy_temperature_predictor.fit_scaler(train_data)
+                _numpy_temperature_predictor.save(model_path)
+                logger.info("[模型服务] NumPy温度预测器训练完成并保存")
+            logger.info("[模型服务] NumPy温度预测器已加载")
+        except Exception as e:
+            logger.warning(f"[模型服务] NumPy温度预测器加载失败: {e}")
+            _numpy_temperature_predictor = None
+    return _numpy_temperature_predictor
+
+
 def get_temperature_predictor():
     """获取温度预测器单例（延迟加载）"""
     global _temperature_predictor
     if _temperature_predictor is None:
         if not _PYTORCH_AVAILABLE:
-            logger.info("[模型服务] PyTorch 未安装，温度预测将使用线性外推")
+            logger.info("[模型服务] PyTorch 未安装，温度预测将使用NumPy/统计方法")
             return None
         try:
             from temperature_predictor import TemperaturePredictionService
@@ -107,15 +160,16 @@ async def detect_anomaly(
     external_temp_data: Optional[list[float]] = None,
 ) -> AnomalyDetectionResult:
     """
-    使用 LSTM 模型检测温度异常
-    如果模型不可用，降级为 Z-score 统计方法
+    使用深度学习模型检测温度异常
+    优先顺序: NumPy模型 > PyTorch模型 > Z-score统计方法
     """
-    detector = get_anomaly_detector()
+    from datetime import datetime
+    n = min(60, len(window_data))
 
-    if detector is not None and len(window_data) >= 60:
+    # 1. 优先尝试 NumPy 模型（无需 PyTorch，Docker 友好）
+    np_detector = get_numpy_anomaly_detector()
+    if np_detector is not None and len(window_data) >= 30:
         try:
-            # 构造多特征输入 (window_size, 5)
-            n = min(60, len(window_data))
             features = []
             for i in range(n):
                 idx = len(window_data) - n + i
@@ -128,8 +182,34 @@ async def detect_anomaly(
                 ]
                 features.append(row)
             features = np.array(features, dtype=np.float32)
+            result = np_detector.detect(features)
+            return AnomalyDetectionResult(
+                is_anomaly=result.is_anomaly,
+                score=result.score,
+                threshold=result.threshold,
+                device_id=device_id,
+                timestamp=datetime.utcnow().isoformat(),
+                method="lstm_numpy",
+            )
+        except Exception as e:
+            logger.error(f"[模型服务] NumPy异常检测失败: {e}")
 
-            from datetime import datetime
+    # 2. 尝试 PyTorch 模型
+    detector = get_anomaly_detector()
+    if detector is not None and len(window_data) >= 60:
+        try:
+            features = []
+            for i in range(n):
+                idx = len(window_data) - n + i
+                row = [
+                    window_data[idx] if idx < len(window_data) else window_data[-1],
+                    humidity_data[idx] if humidity_data and idx < len(humidity_data) else 65.0,
+                    external_temp_data[idx] if external_temp_data and idx < len(external_temp_data) else 25.0,
+                    door_data[idx] if door_data and idx < len(door_data) else 0,
+                    vibration_data[idx] if vibration_data and idx < len(vibration_data) else 0.1,
+                ]
+                features.append(row)
+            features = np.array(features, dtype=np.float32)
             result = detector.detect(features)
             result.device_id = device_id
             result.timestamp = datetime.utcnow().isoformat()
@@ -137,7 +217,7 @@ async def detect_anomaly(
         except Exception as e:
             logger.error(f"[模型服务] LSTM异常检测失败: {e}，降级为统计方法")
 
-    # 降级：Z-score 统计方法
+    # 3. 降级：Z-score 统计方法
     return _statistical_anomaly_detect(device_id, window_data)
 
 
@@ -179,16 +259,16 @@ async def predict_temperature_trend(
     cooling_power_data: Optional[list[float]] = None,
 ) -> TemperaturePredictionResult:
     """
-    使用 LSTM/Transformer 模型预测温度趋势
-    如果模型不可用，降级为线性外推
+    使用深度学习模型预测温度趋势
+    优先顺序: NumPy模型(Holt-Winters) > PyTorch模型 > 线性外推
     """
-    predictor = get_temperature_predictor()
     current_temp = window_data[-1] if window_data else 0.0
+    n = min(60, len(window_data))
 
-    if predictor is not None and len(window_data) >= 60:
+    # 1. 优先尝试 NumPy 模型（Holt-Winters + 指数平滑）
+    np_predictor = get_numpy_temperature_predictor()
+    if np_predictor is not None and len(window_data) >= 20:
         try:
-            # 构造多特征输入 (window_size, 6)
-            n = min(60, len(window_data))
             features = []
             for i in range(n):
                 idx = len(window_data) - n + i
@@ -202,7 +282,36 @@ async def predict_temperature_trend(
                 ]
                 features.append(row)
             features = np.array(features, dtype=np.float32)
+            result = np_predictor.predict(features)
+            return TemperaturePredictionResult(
+                device_id=device_id,
+                current_temperature=current_temp,
+                predictions=result["predictions"],
+                confidence_upper=result["confidence_upper"],
+                confidence_lower=result["confidence_lower"],
+                risk_level=result["risk_level"],
+                method=f"numpy_{result.get('method', 'holt_winters')}",
+            )
+        except Exception as e:
+            logger.error(f"[模型服务] NumPy温度预测失败: {e}")
 
+    # 2. 尝试 PyTorch 模型
+    predictor = get_temperature_predictor()
+    if predictor is not None and len(window_data) >= 60:
+        try:
+            features = []
+            for i in range(n):
+                idx = len(window_data) - n + i
+                row = [
+                    window_data[idx] if idx < len(window_data) else window_data[-1],
+                    humidity_data[idx] if humidity_data and idx < len(humidity_data) else 65.0,
+                    external_temp_data[idx] if external_temp_data and idx < len(external_temp_data) else 25.0,
+                    door_data[idx] if door_data and idx < len(door_data) else 0,
+                    vibration_data[idx] if vibration_data and idx < len(vibration_data) else 0.1,
+                    cooling_power_data[idx] if cooling_power_data and idx < len(cooling_power_data) else 0.5,
+                ]
+                features.append(row)
+            features = np.array(features, dtype=np.float32)
             result = predictor.predict(features)
             return TemperaturePredictionResult(
                 device_id=device_id,
@@ -216,7 +325,7 @@ async def predict_temperature_trend(
         except Exception as e:
             logger.error(f"[模型服务] LSTM/Transformer预测失败: {e}，降级为统计方法")
 
-    # 降级：线性外推
+    # 3. 降级：线性外推
     return _linear_extrapolation(device_id, window_data)
 
 

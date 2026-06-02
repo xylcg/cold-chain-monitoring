@@ -1,16 +1,17 @@
 """
 冷机故障预测性维护 API
 模块4: 冷机故障预测性维护
-- 冷机运行参数分析
-- 故障概率预测（基于梯度提升树/XGBoost模拟）
-- 剩余使用寿命预估
-- 维护提醒与历史记录
+- 冷机运行参数分析与剩余寿命预测（Weibull分布）
+- 故障概率预测（梯度提升树特征加权模拟）
+- 预防性维护计划生成
+- 维护历史与成本追踪
 """
 import random
 import math
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from ..core.security import get_current_user
 from ..services.redis_service import redis_service
@@ -76,21 +77,40 @@ def _generate_maintenance_history(device_id: str) -> list:
     return history
 
 
+def _weibull_failure_probability(run_hours: float, total_life: float, shape: float = 2.5) -> float:
+    """
+    Weibull 分布计算累计失效率
+    F(t) = 1 - exp(-(t/eta)^beta)
+    eta = total_life / gamma(1 + 1/beta)  # 特征寿命
+    """
+    import math
+    beta = shape  # 形状参数（>1 表示耗损失效模式）
+    # 特征寿命eta使得期望寿命=total_life
+    eta = total_life / math.gamma(1 + 1 / beta) if total_life > 0 else 1
+    t = run_hours
+    prob = 1 - math.exp(-((t / eta) ** beta)) if eta > 0 else 0
+    return max(0.001, min(0.995, prob))
+
+
 def _predict_failure(device_id: str) -> dict:
-    """基于设备运行参数模拟故障预测（模拟XGBoost推理）"""
+    """
+    基于设备运行参数的故障预测（模拟 XGBoost 梯度提升树集合）
+    使用 Weibull 分布 + 多特征加权 + SHAP-like 特征重要性
+    """
     random.seed(hash(device_id + datetime.utcnow().strftime("%Y%m%d")) % 10000)
 
-    # 随机选择冷机型号
+    # 分配冷机型号
     unit_keys = list(REFRIGERATION_UNITS.keys())
     unit_key = random.choice(unit_keys)
     unit_info = REFRIGERATION_UNITS[unit_key]
     total_life = unit_info["life_hours"]
 
-    # 模拟运行参数
+    # 阶段1: Weibull 基础失效率
     run_hours = random.randint(2000, total_life)
     remaining_life = total_life - run_hours
+    weibull_prob = _weibull_failure_probability(run_hours, total_life)
 
-    # 模拟冷机关键参数
+    # 阶段2: 实时特征工程
     compressor_starts_per_hour = round(random.uniform(1.5, 6.0), 1)
     refrigerant_pressure_bar = round(random.uniform(2.0, 4.5), 2)
     condenser_temp = round(random.uniform(28.0, 55.0), 1)
@@ -99,67 +119,91 @@ def _predict_failure(device_id: str) -> dict:
     oil_pressure_bar = round(random.uniform(1.0, 3.0), 2)
     vibration_level = round(random.uniform(0.5, 4.0), 2)
     current_draw_a = round(random.uniform(5.0, 18.0), 1)
+    return_temp = round(random.uniform(-5.0, 5.0), 1)
+    ambient_temp = round(random.uniform(15.0, 40.0), 1)
 
-    # 模拟特征工程 → 故障概率
-    # 剩余寿命越少、压缩机启停越频繁、排气温度越高 → 故障概率越高
-    wear_factor = 1 - (remaining_life / total_life)
-    compressor_factor = min(compressor_starts_per_hour / 6.0, 1.0)
-    temp_factor = max(0, (discharge_temp - 60) / 35.0)
-    vibration_factor = vibration_level / 4.0
+    # 阶段3: 特征评分（模拟 SHAP 特征重要性）
+    features = {
+        "磨损因子": max(0, (run_hours / total_life) * 100),  # f1
+        "压缩机启停": min((compressor_starts_per_hour / 6.0) * 100, 100),  # f2
+        "排气温度偏差": max(0, min(((discharge_temp - 70) / 30) * 100, 100)),  # f3
+        "振动水平": min((vibration_level / 4.0) * 100, 100),  # f4
+        "冷媒压力偏差": max(0, min((abs(refrigerant_pressure_bar - 3.2) / 1.5) * 100, 100)),  # f5
+        "电流异常": max(0, min(((current_draw_a - 10) / 10) * 100, 100)),  # f6
+        "冷凝温度偏差": max(0, min(((condenser_temp - 30) / 25) * 100, 100)),  # f7
+        "回气温度偏差": max(0, min((abs(suction_temp + 5) / 15) * 100, 100)),  # f8
+    }
 
-    # 加权计算故障概率（模拟XGBoost集成输出）
-    base_prob = 0.02
-    failure_probability = round(
-        base_prob +
-        wear_factor * 0.45 +
-        compressor_factor * 0.20 +
-        temp_factor * 0.20 +
-        vibration_factor * 0.13 +
-        random.uniform(-0.03, 0.03),
-        4
-    )
-    failure_probability = max(0.01, min(0.98, failure_probability))
+    # 阶段4: XGBoost 模拟集成（加权投票）
+    feature_weights = {
+        "磨损因子": 0.25, "压缩机启停": 0.18, "排气温度偏差": 0.15,
+        "振动水平": 0.12, "冷媒压力偏差": 0.10, "电流异常": 0.08,
+        "冷凝温度偏差": 0.07, "回气温度偏差": 0.05,
+    }
 
-    # 风险等级
-    if failure_probability < 0.15:
-        risk_level = "low"
-        risk_label = "低风险"
-    elif failure_probability < 0.40:
-        risk_level = "medium"
-        risk_label = "中风险"
-    elif failure_probability < 0.65:
-        risk_level = "high"
-        risk_label = "高风险"
+    weighted_score = sum(features[k] * feature_weights[k] for k in features) / 100
+    # Weibull 占60%，实时特征占40%
+    failure_probability = round(weibull_prob * 0.60 + weighted_score * 0.40 + random.uniform(-0.02, 0.02), 4)
+    failure_probability = max(0.005, min(0.98, failure_probability))
+
+    # 风险等级（含置信度）
+    confidence = round(random.uniform(0.82, 0.96), 3)
+    if failure_probability < 0.10:
+        risk_level, risk_label, risk_color = "low", "低风险", "#22c55e"
+    elif failure_probability < 0.25:
+        risk_level, risk_label, risk_color = "medium", "中风险", "#f59e0b"
+    elif failure_probability < 0.50:
+        risk_level, risk_label, risk_color = "high", "高风险", "#f97316"
     else:
-        risk_level = "critical"
-        risk_label = "紧急风险"
+        risk_level, risk_label, risk_color = "critical", "紧急风险", "#ef4444"
 
-    # 预测故障类型
-    if failure_probability > 0.3:
-        failure_types = ["压缩机故障", "制冷剂泄漏", "冷凝器堵塞", "膨胀阀故障", "电气系统故障"]
-        predicted_type = random.choice(failure_types[:min(int(failure_probability * 5) + 1, 5)])
-    else:
-        predicted_type = None
+    # 阶段5: 故障类型预测（多分类）
+    failure_candidates = []
+    if features["排气温度偏差"] > 60:
+        failure_candidates.append({"type": "压缩机过热故障", "prob": round(features["排气温度偏差"] * 0.7, 1)})
+    if features["冷媒压力偏差"] > 55:
+        failure_candidates.append({"type": "制冷剂泄漏", "prob": round(features["冷媒压力偏差"] * 0.8, 1)})
+    if features["冷凝温度偏差"] > 60:
+        failure_candidates.append({"type": "冷凝器堵塞", "prob": round(features["冷凝温度偏差"] * 0.7, 1)})
+    if features["振动水平"] > 65:
+        failure_candidates.append({"type": "轴承磨损", "prob": round(features["振动水平"] * 0.6, 1)})
+    if features["电流异常"] > 55:
+        failure_candidates.append({"type": "电气系统故障", "prob": round(features["电流异常"] * 0.7, 1)})
+    if features["压缩机启停"] > 70:
+        failure_candidates.append({"type": "膨胀阀故障", "prob": round(features["压缩机启停"] * 0.6, 1)})
 
-    # 建议维护时间
-    if remaining_life < 168:
-        next_maintenance_hours = max(4, remaining_life // 2)
-        next_maintenance_label = "立即维护"
-    elif failure_probability > 0.5:
+    if not failure_candidates and failure_probability > 0.25:
+        failure_candidates = [
+            {"type": "综合部件退化", "prob": round(failure_probability * 100, 1)},
+        ]
+
+    # 阶段6: 预防性维护建议
+    if failure_probability > 0.50:
+        next_maintenance_hours = max(4, random.randint(4, 24))
+        next_maintenance_label = "紧急维护"
+        next_maintenance_date = (datetime.utcnow() + timedelta(hours=next_maintenance_hours)).isoformat()
+    elif failure_probability > 0.25:
         next_maintenance_hours = random.randint(24, 72)
         next_maintenance_label = "尽快维护"
-    elif failure_probability > 0.25:
+        next_maintenance_date = (datetime.utcnow() + timedelta(hours=next_maintenance_hours)).isoformat()
+    elif failure_probability > 0.10:
         next_maintenance_hours = random.randint(72, 168)
         next_maintenance_label = "计划维护"
+        next_maintenance_date = (datetime.utcnow() + timedelta(hours=next_maintenance_hours)).isoformat()
     else:
-        next_maintenance_hours = random.randint(168, 500)
+        next_maintenance_hours = random.randint(168, 720)
         next_maintenance_label = "例行维护"
+        next_maintenance_date = (datetime.utcnow() + timedelta(hours=next_maintenance_hours)).isoformat()
+
+    # 维护成本估算
+    estimated_cost = round(random.uniform(300, 20000) * failure_probability + random.uniform(100, 500), 0)
 
     return {
         "device_id": device_id,
         "unit_model": unit_key,
         "unit_brand": unit_info["brand"],
         "unit_power_kw": unit_info["power_kw"],
+        "refrigerant": unit_info["refrigerant"],
         "total_life_hours": total_life,
         "current_run_hours": run_hours,
         "remaining_life_hours": remaining_life,
@@ -167,15 +211,17 @@ def _predict_failure(device_id: str) -> dict:
         "failure_probability": failure_probability,
         "risk_level": risk_level,
         "risk_label": risk_label,
-        "predicted_failure_type": predicted_type,
-        "next_maintenance_hours": next_maintenance_hours,
-        "next_maintenance_label": next_maintenance_label,
-        "feature_importance": {
-            "运行时长占比": round(wear_factor * 100, 1),
-            "压缩机启停频率": round(compressor_factor * 100, 1),
-            "排气温度异常": round(temp_factor * 100, 1),
-            "振动水平": round(vibration_factor * 100, 1),
+        "risk_color": risk_color,
+        "model_confidence": confidence,
+        "weibull_base_probability": round(weibull_prob, 4),
+        "predicted_failures": failure_candidates,
+        "next_maintenance": {
+            "hours_from_now": next_maintenance_hours,
+            "severity": next_maintenance_label,
+            "estimated_date": next_maintenance_date,
+            "estimated_cost_yuan": estimated_cost,
         },
+        "feature_importance": {k: round(v, 1) for k, v in sorted(features.items(), key=lambda x: -x[1])},
         "real_time_params": {
             "compressor_starts_per_hour": compressor_starts_per_hour,
             "refrigerant_pressure_bar": refrigerant_pressure_bar,
@@ -185,8 +231,11 @@ def _predict_failure(device_id: str) -> dict:
             "oil_pressure_bar": oil_pressure_bar,
             "vibration_level": vibration_level,
             "current_draw_a": current_draw_a,
+            "return_air_temp_c": return_temp,
+            "ambient_temp_c": ambient_temp,
         },
         "predicted_at": datetime.utcnow().isoformat(),
+        "algorithm": "Weibull Reliability + Gradient Boosting Ensemble",
     }
 
 
