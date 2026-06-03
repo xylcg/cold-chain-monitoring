@@ -185,28 +185,50 @@ class SensorSimulator:
 
         print(f"[模拟器] 初始化完成: {len(self.vehicles)} 辆车 + {len(self.cold_rooms)} 个冷库 (覆盖全国主要城市)")
 
+    # 中国陆地大致边界（简化矩形约束，排除海洋区域）
+    CHINA_BOUNDS = {
+        "lat_min": 18.0,   # 南海诸岛最南约 4°N，但主要陆地 18°N 起
+        "lat_max": 53.5,   # 黑龙江漠河约 53°N
+        "lng_min": 73.5,   # 新疆帕米尔高原
+        "lng_max": 135.0,  # 黑龙江与乌苏里江汇合处
+    }
+
+    def _clamp_to_china(self, lat: float, lng: float) -> tuple:
+        """将坐标限制在中国陆地大致范围内"""
+        b = self.CHINA_BOUNDS
+        return (
+            max(b["lat_min"], min(b["lat_max"], lat)),
+            max(b["lng_min"], min(b["lng_max"], lng)),
+        )
+
     def _generate_intercity_route(self, origin: str, mid: str, dest: str) -> list:
-        """生成跨城市模拟路线：起点 → 中转 → 终点，带 GPS 插值"""
+        """生成跨城市模拟路线：起点 → 中转 → 终点，带 GPS 插值。
+        
+        路线点限制在中国陆地范围内，避免车辆"开到海里"。
+        """
         coords = self.NATIONWIDE_CITIES
         o_lat, o_lng = coords[origin]
         m_lat, m_lng = coords[mid]
         d_lat, d_lng = coords[dest]
 
         route = []
-        # 第一段：起点 → 中转向城市
-        seg1_points = random.randint(15, 30)
+        # 第一段：起点 → 中转城市
+        seg1_points = random.randint(20, 40)
         for i in range(seg1_points):
             t = i / (seg1_points - 1) if seg1_points > 1 else 0
-            lat = o_lat + (m_lat - o_lat) * t + random.uniform(-0.3, 0.3)
-            lng = o_lng + (m_lng - o_lng) * t + random.uniform(-0.3, 0.3)
+            # 线性插值 + 小幅随机偏移（±0.1° ≈ ±11km，避免偏离太远）
+            lat = o_lat + (m_lat - o_lat) * t + random.uniform(-0.1, 0.1)
+            lng = o_lng + (m_lng - o_lng) * t + random.uniform(-0.1, 0.1)
+            lat, lng = self._clamp_to_china(lat, lng)
             route.append((round(lat, 6), round(lng, 6)))
 
-        # 第二段：中转向城市 → 终点
-        seg2_points = random.randint(15, 30)
+        # 第二段：中转城市 → 终点
+        seg2_points = random.randint(20, 40)
         for i in range(1, seg2_points):  # start at 1 to avoid duplicate mid point
             t = i / (seg2_points - 1) if seg2_points > 1 else 0
-            lat = m_lat + (d_lat - m_lat) * t + random.uniform(-0.3, 0.3)
-            lng = m_lng + (d_lng - m_lng) * t + random.uniform(-0.3, 0.3)
+            lat = m_lat + (d_lat - m_lat) * t + random.uniform(-0.1, 0.1)
+            lng = m_lng + (d_lng - m_lng) * t + random.uniform(-0.1, 0.1)
+            lat, lng = self._clamp_to_china(lat, lng)
             route.append((round(lat, 6), round(lng, 6)))
 
         return route
