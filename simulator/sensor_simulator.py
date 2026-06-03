@@ -42,6 +42,42 @@ class ColdRoomConfig:
 class SensorSimulator:
     """传感器数据模拟器"""
 
+    # 全国主要城市坐标
+    NATIONWIDE_CITIES = {
+        "北京": (39.9042, 116.4074), "天津": (39.0842, 117.2009),
+        "石家庄": (38.0428, 114.5149), "太原": (37.8706, 112.5489),
+        "呼和浩特": (40.8424, 111.7490), "沈阳": (41.8057, 123.4315),
+        "大连": (38.9140, 121.6147), "长春": (43.8171, 125.3235),
+        "哈尔滨": (45.8038, 126.5350), "上海": (31.2304, 121.4737),
+        "南京": (32.0603, 118.7969), "杭州": (30.2741, 120.1551),
+        "合肥": (31.8206, 117.2272), "福州": (26.0745, 119.2965),
+        "厦门": (24.4798, 118.0894), "南昌": (28.6820, 115.8579),
+        "济南": (36.6512, 117.1201), "青岛": (36.0671, 120.3826),
+        "郑州": (34.7466, 113.6253), "武汉": (30.5928, 114.3055),
+        "长沙": (28.2282, 112.9388), "广州": (23.1291, 113.2644),
+        "深圳": (22.5431, 114.0579), "南宁": (22.8167, 108.3669),
+        "海口": (20.0442, 110.1999), "三亚": (18.2528, 109.5120),
+        "成都": (30.5728, 104.0668), "重庆": (29.4316, 106.9123),
+        "贵阳": (26.6470, 106.6302), "昆明": (25.0389, 102.7183),
+        "拉萨": (29.6500, 91.1000), "西安": (34.3416, 108.9398),
+        "兰州": (36.0611, 103.8343), "西宁": (36.6171, 101.7782),
+        "银川": (38.4872, 106.2309), "乌鲁木齐": (43.8256, 87.6168),
+    }
+
+    # 车牌前缀
+    PLATE_PREFIXES = {
+        "北京": "京A", "天津": "津A", "上海": "沪A", "重庆": "渝A",
+        "石家庄": "冀A", "太原": "晋A", "呼和浩特": "蒙A",
+        "沈阳": "辽A", "大连": "辽B", "长春": "吉A", "哈尔滨": "黑A",
+        "南京": "苏A", "杭州": "浙A", "合肥": "皖A", "福州": "闽A",
+        "厦门": "闽D", "南昌": "赣A", "济南": "鲁A", "青岛": "鲁B",
+        "郑州": "豫A", "武汉": "鄂A", "长沙": "湘A",
+        "广州": "粤A", "深圳": "粤B", "南宁": "桂A", "海口": "琼A",
+        "成都": "川A", "贵阳": "贵A", "昆明": "云A", "拉萨": "藏A",
+        "西安": "陕A", "兰州": "甘A", "西宁": "青A", "银川": "宁A",
+        "乌鲁木齐": "新A",
+    }
+
     # 常见货物品类及温控要求
     CARGO_TYPES = {
         "冷冻肉类": {"target": -18, "range": (-22, -15), "humidity": (75, 90)},
@@ -91,20 +127,27 @@ class SensorSimulator:
         self._init_devices()
 
     def _init_devices(self):
-        """初始化所有设备配置"""
-        # 初始化车辆
+        """初始化所有设备配置 - 车辆路线覆盖全国，冷库分布全国各地"""
         cargo_names = list(self.CARGO_TYPES.keys())
+        city_names = list(self.NATIONWIDE_CITIES.keys())
+
         for i in range(self.num_vehicles):
             cargo = random.choice(cargo_names)
             config = self.CARGO_TYPES[cargo]
             device_id = f"VEH-{i+1:04d}"
 
-            # 生成模拟路线（北京周边经纬度范围）
-            route = self._generate_vehicle_route()
+            # 随机选择起止城市（跨区域运输）
+            origin_city = random.choice(city_names)
+            dest_city = random.choice([c for c in city_names if c != origin_city])
+            mid_city = random.choice([c for c in city_names if c not in (origin_city, dest_city)])
+
+            # 生成城市间路线
+            route = self._generate_intercity_route(origin_city, mid_city, dest_city)
+            plate_prefix = self.PLATE_PREFIXES.get(origin_city, "京A")
 
             self.vehicles.append(VehicleConfig(
                 device_id=device_id,
-                plate_number=f"京A{random.randint(10000, 99999)}",
+                plate_number=f"{plate_prefix}{random.randint(10000, 99999)}",
                 cargo_type=cargo,
                 target_temp=config["target"],
                 temp_range=config["range"],
@@ -117,41 +160,60 @@ class SensorSimulator:
                 "route_index": 0,
             }
 
-        # 初始化冷库
+        # 初始化冷库 — 分布在全国各地
+        warehouse_cities = ["北京", "上海", "广州", "成都", "武汉", "西安", "沈阳", "深圳", "郑州", "重庆"]
         cold_room_cargos = ["冷藏水果", "冷藏蔬菜", "冷冻肉类", "疫苗"]
         for i in range(self.num_cold_rooms):
+            city = warehouse_cities[i % len(warehouse_cities)]
+            base_lat, base_lng = self.NATIONWIDE_CITIES[city]
             cargo = cold_room_cargos[i % len(cold_room_cargos)]
             config = self.CARGO_TYPES[cargo]
             device_id = f"COLD-{i+1:04d}"
 
             self.cold_rooms.append(ColdRoomConfig(
                 device_id=device_id,
-                room_name=f"冷库{i+1}号",
+                room_name=f"{city}冷库{i+1}号",
                 target_temp=config["target"],
                 temp_range=config["range"],
                 humidity_range=config["humidity"],
-                location=(39.9 + random.uniform(-0.1, 0.1), 116.4 + random.uniform(-0.1, 0.1)),
+                location=(base_lat + random.uniform(-0.05, 0.05), base_lng + random.uniform(-0.05, 0.05)),
             ))
             self.sensor_states[device_id] = {
                 "temperature": config["target"],
                 "humidity": sum(config["humidity"]) / 2,
             }
 
-        print(f"[模拟器] 初始化完成: {len(self.vehicles)} 辆车 + {len(self.cold_rooms)} 个冷库")
+        print(f"[模拟器] 初始化完成: {len(self.vehicles)} 辆车 + {len(self.cold_rooms)} 个冷库 (覆盖全国主要城市)")
 
-    def _generate_vehicle_route(self) -> list:
-        """生成模拟车辆路线"""
-        base_lat, base_lng = 39.9, 116.4  # 北京中心
+    def _generate_intercity_route(self, origin: str, mid: str, dest: str) -> list:
+        """生成跨城市模拟路线：起点 → 中转 → 终点，带 GPS 插值"""
+        coords = self.NATIONWIDE_CITIES
+        o_lat, o_lng = coords[origin]
+        m_lat, m_lng = coords[mid]
+        d_lat, d_lng = coords[dest]
+
         route = []
-        num_points = random.randint(20, 50)
-        current_lat, current_lng = base_lat + random.uniform(-0.15, 0.15), base_lng + random.uniform(-0.15, 0.15)
+        # 第一段：起点 → 中转向城市
+        seg1_points = random.randint(15, 30)
+        for i in range(seg1_points):
+            t = i / (seg1_points - 1) if seg1_points > 1 else 0
+            lat = o_lat + (m_lat - o_lat) * t + random.uniform(-0.3, 0.3)
+            lng = o_lng + (m_lng - o_lng) * t + random.uniform(-0.3, 0.3)
+            route.append((round(lat, 6), round(lng, 6)))
 
-        for _ in range(num_points):
-            current_lat += random.uniform(-0.005, 0.005)
-            current_lng += random.uniform(-0.005, 0.005)
-            route.append((round(current_lat, 6), round(current_lng, 6)))
+        # 第二段：中转向城市 → 终点
+        seg2_points = random.randint(15, 30)
+        for i in range(1, seg2_points):  # start at 1 to avoid duplicate mid point
+            t = i / (seg2_points - 1) if seg2_points > 1 else 0
+            lat = m_lat + (d_lat - m_lat) * t + random.uniform(-0.3, 0.3)
+            lng = m_lng + (d_lng - m_lng) * t + random.uniform(-0.3, 0.3)
+            route.append((round(lat, 6), round(lng, 6)))
 
         return route
+
+    def _generate_vehicle_route(self) -> list:
+        """保留接口兼容性（已不使用）"""
+        return self._generate_intercity_route("北京", "郑州", "武汉")
 
     def _generate_temperature(self, device_id: str, target: float, temp_range: tuple,
                               is_anomaly: bool) -> float:
