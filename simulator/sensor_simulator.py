@@ -108,7 +108,7 @@ class SensorSimulator:
         num_cold_rooms: int = 10,
         api_url: str = "http://localhost:8000/api/v1/sensors/data",
         interval: float = 10.0,
-        anomaly_probability: float = 0.02,
+        anomaly_probability: float = 0.005,
     ):
         self.num_vehicles = num_vehicles
         self.num_cold_rooms = num_cold_rooms
