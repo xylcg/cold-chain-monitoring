@@ -219,13 +219,14 @@ class SensorSimulator:
                               is_anomaly: bool) -> float:
         """生成温度数据，支持正常波动和异常"""
         state = self.sensor_states[device_id]
+        target_min, target_max = temp_range
 
         if is_anomaly and device_id not in self.active_anomalies:
             anomaly_type = random.choice(self.ANOMALY_TYPES)
             self.active_anomalies[device_id] = {
                 "type": anomaly_type,
                 "start_time": time.time(),
-                "duration": random.randint(30, 120),
+                "duration": random.randint(60, 300),  # 异常持续 1-5 分钟，更真实
                 "base_temp": state.get("temperature", target),
             }
 
@@ -233,36 +234,60 @@ class SensorSimulator:
         if anomaly:
             elapsed = time.time() - anomaly["start_time"]
             if elapsed > anomaly["duration"]:
+                # 异常结束，缓慢回归
+                current = state.get("temperature", target)
+                state["temperature"] = current + (target - current) * 0.2
                 del self.active_anomalies[device_id]
                 anomaly = None
 
         if anomaly:
             a_type = anomaly["type"]
             base = anomaly["base_temp"]
+            # 获取当前小时的外部环境温度（用于车门未关等场景）
+            hour = datetime.now().hour
+            external_temp = 20 + 8 * math.sin((hour - 6) * math.pi / 12)
 
             if a_type == "gradual_drift":
-                drift = (elapsed / anomaly["duration"]) * random.uniform(8, 15)
+                # 缓慢漂移：升温不超过 6°C，速率约 0.02°C/s
+                drift = (elapsed / anomaly["duration"]) * random.uniform(3, 6)
                 temp = base + drift
             elif a_type == "sudden_spike":
-                temp = base + random.uniform(10, 20) * (1 if random.random() > 0.3 else -1)
+                # 突跳：±3~6°C，更合理的传感器异常
+                temp = base + random.uniform(3, 6) * (1 if random.random() > 0.4 else -1)
             elif a_type == "periodic_oscillation":
-                temp = base + 8 * math.sin(elapsed * 0.5) + random.uniform(-1, 1)
+                # 周期性波动：振幅缩小到 ±3°C
+                temp = base + 3 * math.sin(elapsed * 0.3) + random.uniform(-0.5, 0.5)
             elif a_type == "sensor_stuck":
                 temp = base  # 卡死在某个值
             elif a_type == "refrigeration_failure":
-                temp = base + 0.15 * elapsed  # 缓慢升温
+                # 制冷故障：缓慢趋向外部温度，速率 0.03°C/s
+                drift_toward_external = (external_temp - base) * min(1.0, elapsed * 0.005)
+                temp = base + drift_toward_external + random.gauss(0, 0.5)
             elif a_type == "door_stuck_open":
-                temp = base + random.uniform(5, 10)  # 门开温度升高
+                # 车门未关：受外部温度影响，升温幅度与内外温差相关
+                temp_gap = external_temp - base
+                door_rise = min(abs(temp_gap) * 0.4, 8) + random.uniform(1, 3)
+                temp = base + door_rise
             else:
                 temp = base + random.gauss(0, 0.5)
         else:
-            # 正常波动
-            temp = state.get("temperature", target) + random.gauss(0, 0.3)
-            # 缓慢回归目标温度
-            temp += (target - temp) * 0.1
+            # --- 正常波动：模拟压缩机制冷循环 ---
+            elapsed_total = time.time()  # 用当前时间模拟压缩机周期
+            current_temp = state.get("temperature", target)
 
-        # 限制在合理范围
-        temp = max(-40, min(50, temp))
+            # 压缩机循环：周期约 3-5 分钟，振幅 ±1.5°C
+            compressor_cycle = 1.5 * math.sin(elapsed_total * 0.03 + hash(device_id) % 100)
+            # 随机噪声：±0.8°C
+            noise = random.gauss(0, 0.6)
+
+            temp = current_temp + compressor_cycle * 0.15 + noise
+            # 向目标温度回归（箱体内温度有惯性）
+            temp += (target - temp) * 0.08
+
+        # 限制在合理范围：基于货物品类的正常区间扩展
+        lower_bound = max(-40, target_min - 15)
+        upper_bound = min(50, target_max + 20)
+        temp = max(lower_bound, min(upper_bound, temp))
         state["temperature"] = temp
         return round(temp, 2)
 
@@ -320,9 +345,11 @@ class SensorSimulator:
         if anomaly and anomaly["type"] == "refrigeration_failure":
             cold_car_status = 0
 
-        # 外部环境温度（随经纬度和时间模拟）
+        # 外部环境温度（随纬度 + 时间模拟，中国南北温差显著）
         hour = datetime.now().hour
-        base_external = 20 + 8 * math.sin((hour - 6) * math.pi / 12)  # 日周期
+        # 日周期基础温度，纬度越低越热
+        lat_factor = (35.0 - lat) * 0.6  # 北京纬度约40，广州约23，温差约10°C
+        base_external = 20 + lat_factor + 8 * math.sin((hour - 6) * math.pi / 12)
         external_temp = round(base_external + random.gauss(0, 1.5), 1)
 
         # 车辆行驶速度
@@ -379,7 +406,10 @@ class SensorSimulator:
             "battery_level": None,
             "signal_strength": 100,
             "cold_car_status": 1,
-            "external_temp": round(room.target_temp + random.uniform(5, 15), 1),
+            "external_temp": round(
+                20 + (35.0 - room.location[0]) * 0.6 + 8 * math.sin((datetime.now().hour - 6) * math.pi / 12)
+                + random.gauss(0, 1.5), 1
+            ),
             "waybill_no": waybill_no,
         }
 
