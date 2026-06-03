@@ -23,7 +23,28 @@ CITY_COORDS = {
     "长沙": (28.2282, 112.9388),
     "深圳": (22.5431, 114.0579),
     "杭州": (30.2741, 120.1551),
+    "南京": (32.0603, 118.7969),
+    "重庆": (29.4316, 106.9123),
+    "济南": (36.6512, 117.1201),
+    "沈阳": (41.8057, 123.4315),
+    "天津": (39.0842, 117.2009),
 }
+
+
+def _find_nearest_city(lat: float, lng: float) -> str:
+    """根据经纬度找到最近的中国城市"""
+    import math
+    best_city = "北京"
+    best_dist = float("inf")
+    for city, (clat, clng) in CITY_COORDS.items():
+        # 用简单的欧几里得距离近似（纬度约111km/度，经度约111*cos(lat)km/度）
+        dlat = (lat - clat) ** 2
+        dlng = ((lng - clng) * math.cos(math.radians((lat + clat) / 2))) ** 2
+        dist = dlat + dlng
+        if dist < best_dist:
+            best_dist = dist
+            best_city = city
+    return best_city
 
 # 预设车辆路线
 VEHICLE_ROUTES = [
@@ -69,10 +90,20 @@ async def get_vehicle_list(
 
         route_idx = (i - 1) % len(VEHICLE_ROUTES)
         route = VEHICLE_ROUTES[route_idx]
-        current_city = route[random.randint(0, len(route) - 1)]
-        city_coord = CITY_COORDS.get(current_city, (39.9, 116.4))
 
         online = dev_id in online_set
+
+        # 在线车辆根据实际坐标推算城市，离线车辆随机选择路线城市
+        if online and status_data.get("latitude") and status_data.get("longitude"):
+            lat = float(status_data.get("latitude", 0))
+            lng = float(status_data.get("longitude", 0))
+            current_city = _find_nearest_city(lat, lng)
+        else:
+            current_city = route[random.randint(0, len(route) - 1)]
+            city_coord = CITY_COORDS.get(current_city, (39.9, 116.4))
+            lat = city_coord[0] + random.uniform(-0.5, 0.5)
+            lng = city_coord[1] + random.uniform(-0.5, 0.5)
+
         temp = float(status_data.get("temperature", 0)) if online else round(random.uniform(-22, 6), 1)
         has_alert = random.random() < 0.15 if online else False
 
@@ -83,8 +114,8 @@ async def get_vehicle_list(
             "online": online,
             "temperature": temp,
             "humidity": float(status_data.get("humidity", 0)) if online else round(random.uniform(50, 80), 1),
-            "latitude": float(status_data.get("latitude", 0)) if online else city_coord[0] + random.uniform(-0.5, 0.5),
-            "longitude": float(status_data.get("longitude", 0)) if online else city_coord[1] + random.uniform(-0.5, 0.5),
+            "latitude": lat,
+            "longitude": lng,
             "vehicle_speed": float(status_data.get("vehicle_speed", 0)) if online else round(random.uniform(0, 100), 1),
             "door_status": int(status_data.get("door_status", 0)) if online else 0,
             "cold_car_status": int(status_data.get("cold_car_status", 1)) if online else 1,
@@ -240,11 +271,19 @@ async def get_all_vehicle_positions(
 
         route_idx = int(device_id.split("-")[1]) % len(VEHICLE_ROUTES) if "-" in device_id else 0
         route = VEHICLE_ROUTES[route_idx]
-        city = route[random.randint(0, len(route) - 1)]
-        coord = CITY_COORDS.get(city, (39.9, 116.4))
 
-        lat = float(status_data.get("latitude", 0)) if status_data.get("latitude") else coord[0] + random.uniform(-0.3, 0.3)
-        lng = float(status_data.get("longitude", 0)) if status_data.get("longitude") else coord[1] + random.uniform(-0.3, 0.3)
+        # 优先使用 Redis 中的坐标，否则回退到模拟城市坐标
+        has_redis_coords = status_data.get("latitude") and status_data.get("longitude")
+        if has_redis_coords:
+            lat = float(status_data.get("latitude", 0))
+            lng = float(status_data.get("longitude", 0))
+            city = _find_nearest_city(lat, lng)
+        else:
+            city = route[random.randint(0, len(route) - 1)]
+            coord = CITY_COORDS.get(city, (39.9, 116.4))
+            lat = coord[0] + random.uniform(-0.3, 0.3)
+            lng = coord[1] + random.uniform(-0.3, 0.3)
+
         temp = float(status_data.get("temperature", 0)) if status_data.get("temperature") else round(random.uniform(-22, 6), 1)
         has_alert = random.random() < 0.1
 
