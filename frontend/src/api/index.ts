@@ -3,7 +3,7 @@ import { ElMessage } from 'element-plus'
 
 const api = axios.create({
   baseURL: '/api/v1',
-  timeout: 10000,
+  timeout: 60000,
 })
 
 // 请求拦截器
@@ -91,6 +91,10 @@ export const traceabilityAPI = {
   getStats: () => api.get('/traceability/stats'),
   verifyBlockchain: (waybillId: string) => api.get(`/traceability/blockchain/verify/${waybillId}`),
   getLedger: (limit?: number) => api.get('/traceability/blockchain/ledger', { params: { limit } }),
+  // 运单管理
+  getWaybills: () => api.get('/traceability/waybills'),
+  createWaybill: (data: any) => api.post('/traceability/waybill', data),
+  getWaybillDetail: (waybillId: string) => api.get(`/traceability/waybill/${waybillId}`),
 }
 
 export const customerAPI = {
@@ -138,11 +142,17 @@ export const dispatchAPI = {
 export const qualityAPI = {
   assess: (productType: string, storageDays: number) =>
     api.post('/quality/assess', { product_type: productType, storage_days: storageDays }),
+  assessWithImage: (formData: FormData) =>
+    api.post('/quality/assess/image', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    }),
   getBatches: (category?: string, grade?: string) =>
     api.get('/quality/batches', { params: { category, grade } }),
   getBatchDetail: (batchId: string) => api.get(`/quality/batch/${batchId}`),
   getStats: () => api.get('/quality/stats'),
   getProducts: () => api.get('/quality/products'),
+  getDemo: (productKey: string) => api.get('/quality/demo', { params: { product_key: productKey } }),
 }
 
 export const uploadAPI = {

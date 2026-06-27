@@ -38,7 +38,7 @@ class _MemoryStore:
             self._expiry.pop(k, None)
 
     # --- string ---
-    async def set(self, key: str, value: str, ex: int | None = None, **kwargs):
+    async def set(self, key: str, value: str, ex: Optional[int] = None, **kwargs):
         self._cleanup()
         self._data[key] = value
         if ex:
@@ -48,7 +48,7 @@ class _MemoryStore:
         """set with expiry (alias)"""
         await self.set(key, value, ex=seconds)
 
-    async def get(self, key: str) -> str | None:
+    async def get(self, key: str) -> Optional[str]:
         self._cleanup()
         if key in self._expiry and self._expiry[key] < time.time():
             return None

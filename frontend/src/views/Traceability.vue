@@ -3,6 +3,7 @@
     <div class="page-header">
       <h2 class="page-title">全程冷链追溯链</h2>
       <div class="header-right">
+        <el-button type="success" @click="showCreateDialog = true">创建运单</el-button>
         <el-input v-model="searchKeyword" placeholder="输入运单号搜索..." clearable style="width: 260px" @keyup.enter="searchTrace">
           <template #prefix>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -91,6 +92,60 @@
       <p>输入运单号查询全程冷链追溯记录</p>
       <span>支持按运单号搜索，查看从产地到消费者全链路温控数据</span>
     </div>
+
+    <!-- 创建运单对话框 -->
+    <el-dialog v-model="showCreateDialog" title="创建新运单" width="520px">
+      <el-form :model="newWaybill" label-width="90px">
+        <el-form-item label="运单号" required>
+          <el-input v-model="newWaybill.waybill_id" placeholder="如：WB20250625001" />
+        </el-form-item>
+        <el-form-item label="货物名称" required>
+          <el-input v-model="newWaybill.cargo_name" placeholder="如：有机草莓" />
+        </el-form-item>
+        <el-form-item label="货物类别">
+          <el-select v-model="newWaybill.cargo_category" style="width:100%">
+            <el-option label="水果" value="水果" />
+            <el-option label="蔬菜" value="蔬菜" />
+            <el-option label="肉类" value="肉类" />
+            <el-option label="海鲜" value="海鲜" />
+            <el-option label="疫苗" value="疫苗" />
+            <el-option label="医药" value="医药" />
+            <el-option label="乳制品" value="乳制品" />
+            <el-option label="其他" value="其他" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="发货地">
+          <el-input v-model="newWaybill.origin" placeholder="如：北京市朝阳区" />
+        </el-form-item>
+        <el-form-item label="收货地">
+          <el-input v-model="newWaybill.destination" placeholder="如：上海市浦东新区" />
+        </el-form-item>
+        <el-form-item label="数量">
+          <el-input-number v-model="newWaybill.quantity" :min="0" :precision="1" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="单位">
+          <el-select v-model="newWaybill.unit" style="width:100%">
+            <el-option label="kg" value="kg" />
+            <el-option label="吨" value="吨" />
+            <el-option label="件" value="件" />
+            <el-option label="箱" value="箱" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="发货人">
+          <el-input v-model="newWaybill.shipper" placeholder="发货人姓名/公司" />
+        </el-form-item>
+        <el-form-item label="收货人">
+          <el-input v-model="newWaybill.receiver" placeholder="收货人姓名/公司" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="newWaybill.notes" type="textarea" :rows="2" placeholder="其他备注信息" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCreateDialog = false">取消</el-button>
+        <el-button type="primary" @click="createWaybill" :loading="creating">确认创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -104,6 +159,20 @@ const searchKeyword = ref('')
 const traceResult = ref<any>(null)
 const searchResults = ref<any[]>([])
 const stats = ref<any>(null)
+const showCreateDialog = ref(false)
+const creating = ref(false)
+const newWaybill = ref({
+  waybill_id: '',
+  cargo_name: '',
+  cargo_category: '水果',
+  origin: '',
+  destination: '',
+  quantity: 0,
+  unit: 'kg',
+  shipper: '',
+  receiver: '',
+  notes: '',
+})
 
 async function searchTrace() {
   const kw = searchKeyword.value.trim()
@@ -126,6 +195,29 @@ async function downloadReport() {
     const a = document.createElement('a'); a.href = url; a.download = `trace_report_${traceResult.value.waybill_id}.txt`; a.click()
     URL.revokeObjectURL(url); ElMessage.success('报告已下载')
   } catch { ElMessage.error('下载失败') }
+}
+
+async function createWaybill() {
+  if (!newWaybill.value.waybill_id || !newWaybill.value.cargo_name) {
+    ElMessage.warning('请填写运单号和货物名称')
+    return
+  }
+  creating.value = true
+  try {
+    await traceabilityAPI.createWaybill(newWaybill.value)
+    ElMessage.success('运单创建成功')
+    showCreateDialog.value = false
+    newWaybill.value = {
+      waybill_id: '', cargo_name: '', cargo_category: '水果',
+      origin: '', destination: '', quantity: 0, unit: 'kg',
+      shipper: '', receiver: '', notes: '',
+    }
+    loadStats()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '创建失败')
+  } finally {
+    creating.value = false
+  }
 }
 
 async function loadStats() { try { stats.value = await traceabilityAPI.getStats() } catch {} }

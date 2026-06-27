@@ -9,15 +9,19 @@ import uuid
 # 统一温度阈值定义，所有模块引用此处
 
 TEMP_THRESHOLD = {
-    "DANGER_UPPER": 15.0,    # 严重超标上限（°C）
-    "WARN_UPPER": 8.0,       # 预警上限（°C）
-    "LOW_LIMIT": -25.0,      # 低温下限（°C）
-    "COMPLIANCE_MIN": -25.0,  # 达标温度下限（°C）
-    "COMPLIANCE_MAX": 8.0,    # 达标温度上限（°C）
-    "HUMIDITY_HIGH": 95.0,    # 湿度过高阈值（%RH）
-    "VIBRATION_HIGH": 5.0,    # 振动异常阈值（g）
-    "COOLDOWN_SECONDS": 300,  # 告警冷却期（秒）
-    "COOLDOWN_CRITICAL": 60,  # 紧急告警冷却期（秒）
+    "DANGER_UPPER": 15.0,       # 严重超标上限（°C）
+    "WARN_UPPER": 8.0,          # 预警上限（°C）
+    "LOW_LIMIT": -25.0,         # 低温下限（°C）
+    "COMPLIANCE_MIN": -25.0,    # 达标温度下限（°C）
+    "COMPLIANCE_MAX": 8.0,      # 达标温度上限（°C）
+    "HUMIDITY_HIGH": 95.0,      # 湿度过高阈值（%RH）
+    "VIBRATION_HIGH": 5.0,      # 振动异常阈值（g）
+    "COOLDOWN_SECONDS": 300,    # 告警冷却期（秒）
+    "COOLDOWN_CRITICAL": 60,    # 紧急告警冷却期（秒）
+    "DOOR_TIMEOUT_SECONDS": 300, # 车门超时开启阈值（秒，5分钟）
+    "DATA_QUALITY_LOW": 0.5,     # 数据质量低阈值
+    "TEMP_SPIKE_RATE": 3.0,      # 温度骤变阈值（°C/分钟）
+    "DEVICE_OFFLINE_SECONDS": 60, # 设备离线判定（秒，心跳超时）
 }
 
 

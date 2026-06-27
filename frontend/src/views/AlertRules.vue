@@ -50,6 +50,8 @@
             <el-option label="湿度" value="humidity" />
             <el-option label="振动" value="vibration" />
             <el-option label="车门状态" value="door_status" />
+            <el-option label="冷机状态" value="cold_car_status" />
+            <el-option label="数据质量" value="data_quality" />
           </el-select>
         </el-form-item>
         <el-form-item label="条件">

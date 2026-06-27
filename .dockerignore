@@ -1,0 +1,39 @@
+# Python虚拟环境
+backend/venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.coverage
+
+# Node.js
+frontend/node_modules/
+frontend/dist/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker数据（不要复制到镜像）
+docker-data/
+
+# 日志和临时文件
+*.log
+*.tmp
+*.bak
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 测试和文档（可选）
+**/tests/
+docs/
+*.md
+LICENSE

@@ -8,14 +8,14 @@ WORKDIR /app
 # 配置国内 pip 镜像源加速下载
 RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
-# 安装 Python 依赖（全部走清华源）
+# 安装 Python 依赖
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制后端代码
 COPY backend/ .
 
-# 复制模型文件（NumPy 模型，无需 PyTorch）
+# 复制模型文件
 COPY models/ /models/
 
 EXPOSE 8000

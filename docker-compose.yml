@@ -1,10 +1,9 @@
 # ============================================
-# 冷链物流智能监控平台 - Docker Compose
+# 冷链物流智能监控平台 - Docker Compose (完整版)
 # ============================================
-# Docker Desktop 会自动检测此文件并显示在左侧边栏
-# 启动:  点击 Docker Desktop 左侧项目 或 docker compose up -d
-# 停止:  docker compose down
-# 重构:  docker compose up -d --build
+# 启动: docker compose up -d --build
+# 停止: docker compose down
+# 查看日志: docker compose logs -f
 # ============================================
 
 services:
@@ -13,7 +12,7 @@ services:
   # ========================================
   taos:
     image: tdengine/tdengine:3.0.7.1
-    container_name: coldchain-tdengine
+    container_name: coldchain-taos
     environment:
       - TAOS_FQDN=taos
     volumes:
@@ -94,6 +93,7 @@ services:
       - postgres
       - redis
       - taos
+      - kafka
     environment:
       # 应用配置
       APP_NAME: "冷链物流智能监控平台"
@@ -124,6 +124,10 @@ services:
       KAFKA_SENSOR_TOPIC: coldchain_sensor_data
       KAFKA_ALERT_TOPIC: coldchain_alerts
       KAFKA_PREDICTION_TOPIC: coldchain_predictions
+      # AI大模型配置 (阿里云百炼)
+      QUALITY_MODEL_PROVIDER: alibaba
+      ALIBABA_API_KEY: sk-c732dcba84064b08b7dfd61ece923d7a
+      ZHIPU_API_KEY: sk-c732dcba84064b08b7dfd61ece923d7a
     volumes:
       - ./models:/models
     networks:
@@ -156,6 +160,11 @@ services:
     container_name: coldchain-simulator
     depends_on:
       - backend
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_SENSOR_TOPIC: coldchain_sensor_data
+      API_BASE_URL: http://backend:8000
     networks:
       - coldchain-net
     restart: unless-stopped

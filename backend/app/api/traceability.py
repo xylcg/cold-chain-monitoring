@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 from ..core.security import get_current_user
 from ..services.redis_service import redis_service
@@ -101,6 +102,21 @@ def _record_on_chain(waybill_id: str, records: list, report: dict) -> dict:
 # 内存存储追溯记录（后续可迁移到 PostgreSQL）
 _trace_records: list[dict] = []
 _trace_links: dict = {}  # waybill_id -> list of trace record ids
+_waybills: dict = {}  # waybill_id -> 运单元数据
+
+
+# 运单数据模型
+class WaybillCreate(BaseModel):
+    waybill_id: str
+    cargo_name: str
+    cargo_category: str = "水果"
+    origin: str = ""
+    destination: str = ""
+    quantity: float = 0.0
+    unit: str = "kg"
+    shipper: str = ""
+    receiver: str = ""
+    notes: str = ""
 
 
 # ==================== 初始化示例数据 ====================
@@ -178,6 +194,88 @@ def _init_sample_traces():
 
 
 _init_sample_traces()
+
+
+# ==================== 运单管理 ====================
+
+@router.get("/waybills")
+async def get_all_waybills(
+    user: dict = Depends(get_current_user),
+):
+    """获取所有运单列表"""
+    results = []
+    for waybill_id, record_ids in _trace_links.items():
+        records = [r for r in _trace_records if r["id"] in record_ids]
+        if not records:
+            continue
+        waybill_meta = _waybills.get(waybill_id, {})
+        results.append({
+            "waybill_id": waybill_id,
+            "cargo_name": waybill_meta.get("cargo_name", "未知货物"),
+            "cargo_category": waybill_meta.get("cargo_category", "其他"),
+            "origin": waybill_meta.get("origin", ""),
+            "destination": waybill_meta.get("destination", ""),
+            "quantity": waybill_meta.get("quantity", 0),
+            "unit": waybill_meta.get("unit", "kg"),
+            "stages": len(records),
+            "first_record": records[0]["timestamp"],
+            "last_record": records[-1]["timestamp"],
+            "avg_temperature": round(sum(r["temperature"] for r in records) / len(records), 1),
+            "is_compliant": not any(
+                r["temperature"] > TEMP_THRESHOLD["WARN_UPPER"] or r["temperature"] < TEMP_THRESHOLD["LOW_LIMIT"]
+                for r in records
+            ),
+        })
+    return {"count": len(results), "waybills": results}
+
+
+@router.post("/waybill")
+async def create_waybill(
+    data: WaybillCreate,
+    user: dict = Depends(get_current_user),
+):
+    """创建新运单"""
+    if data.waybill_id in _waybills:
+        raise HTTPException(status_code=400, detail="运单号已存在")
+
+    waybill = {
+        "waybill_id": data.waybill_id,
+        "cargo_name": data.cargo_name,
+        "cargo_category": data.cargo_category,
+        "origin": data.origin,
+        "destination": data.destination,
+        "quantity": data.quantity,
+        "unit": data.unit,
+        "shipper": data.shipper,
+        "receiver": data.receiver,
+        "notes": data.notes,
+        "created_at": datetime.utcnow().isoformat(),
+        "status": "created",
+    }
+    _waybills[data.waybill_id] = waybill
+    _trace_links[data.waybill_id] = []
+
+    return {"status": "ok", "waybill": waybill}
+
+
+@router.get("/waybill/{waybill_id}")
+async def get_waybill(
+    waybill_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """获取运单详情"""
+    if waybill_id not in _waybills:
+        raise HTTPException(status_code=404, detail="运单不存在")
+    
+    waybill = _waybills[waybill_id]
+    record_ids = _trace_links.get(waybill_id, [])
+    records = [r for r in _trace_records if r["id"] in record_ids]
+    
+    return {
+        "waybill": waybill,
+        "records": records,
+        "total_stages": len(records),
+    }
 
 
 # ==================== 追溯记录 CRUD ====================

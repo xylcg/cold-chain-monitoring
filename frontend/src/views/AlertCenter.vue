@@ -37,7 +37,7 @@
             <span class="atime-dot"></span>
             {{ formatTime(device.last_update) }}
           </span>
-          <span class="adetail">查看详情 →</span>
+          <span class="adetail" @click="showDeviceDetail(device)">查看详情 →</span>
         </div>
       </div>
     </div>
@@ -59,13 +59,53 @@
         </div>
       </div>
     </div>
+
+    <el-dialog v-model="showDetail" :title="selectedDevice?.device_id + ' · 设备详情'" width="480px" class="custom-dialog">
+      <div v-if="selectedDevice" class="detail">
+        <div class="detail-grid">
+          <div class="d-item"><span class="d-lab">类型</span><span class="d-val">{{ selectedDevice.device_type === 'vehicle' ? '冷藏车' : '冷库' }}</span></div>
+          <div class="d-item"><span class="d-lab">温度</span><span class="d-val highlight" :class="getTempClass(selectedDevice.temperature)">{{ selectedDevice.temperature }}°C</span></div>
+          <div class="d-item"><span class="d-lab">湿度</span><span class="d-val">{{ selectedDevice.humidity }}%</span></div>
+          <div class="d-item"><span class="d-lab">车门</span><span class="d-val">{{ selectedDevice.door_status ? '开启' : '关闭' }}</span></div>
+          <div class="d-item"><span class="d-lab">振动</span><span class="d-val">{{ selectedDevice.vibration || '—' }}</span></div>
+          <div class="d-item"><span class="d-lab">告警</span><span class="d-val danger">{{ selectedDevice.active_alerts || 0 }}</span></div>
+          <div class="d-item"><span class="d-lab">车牌号</span><span class="d-val mono">{{ selectedDevice.plate_number || '—' }}</span></div>
+          <div class="d-item"><span class="d-lab">车速</span><span class="d-val">{{ selectedDevice.vehicle_speed || 0 }} km/h</span></div>
+          <div class="d-item"><span class="d-lab">电量</span><span class="d-val">{{ selectedDevice.battery_level || 0 }}%</span></div>
+          <div class="d-item"><span class="d-lab">信号</span><span class="d-val">{{ '★'.repeat(selectedDevice.signal_strength || 0) }}{{ '☆'.repeat(5 - (selectedDevice.signal_strength || 0)) }}</span></div>
+          <div class="d-item"><span class="d-lab">货物类型</span><span class="d-val">{{ selectedDevice.cargo_type || '—' }}</span></div>
+          <div class="d-item"><span class="d-lab">运单号</span><span class="d-val mono">{{ selectedDevice.waybill_no || '—' }}</span></div>
+        </div>
+        <div class="d-time"><span class="d-lab">最后更新</span><span class="d-val mono">{{ formatTime(selectedDevice.last_update) }}</span></div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { getTempClass, formatTime } from '@/utils'
+import { vehicleAPI } from '@/api'
+import { ElMessage } from 'element-plus'
+
 const store = useAppStore()
+const showDetail = ref(false)
+const selectedDevice = ref<any>(null)
+
+async function showDeviceDetail(device: any) {
+  try {
+    const detail = await vehicleAPI.getDetail(device.device_id)
+    selectedDevice.value = {
+      ...detail,
+      active_alerts: device.active_alerts,
+      temperature: detail.temperature || device.last_temperature,
+    }
+    showDetail.value = true
+  } catch {
+    ElMessage.error('获取设备详情失败')
+  }
+}
 </script>
 
 <style scoped>
@@ -135,4 +175,15 @@ const store = useAppStore()
 .sev-badge.amber { color: var(--amber); background: var(--amber-bg); border: 1px solid rgba(245,158,11,0.15); }
 .sev-badge.red { color: var(--red); background: var(--red-bg); border: 1px solid rgba(239,68,68,0.15); }
 .sev-badge.crit { color: #fff; background: var(--red); }
+
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.d-item { padding: 12px; background: var(--bg-input); border-radius: var(--radius); display: flex; flex-direction: column; gap: 4px; }
+.d-lab { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.d-val { font-size: 15px; font-weight: 600; color: var(--text-primary); font-family: var(--font-mono); }
+.d-val.highlight { font-family: var(--font-display); font-size: 18px; }
+.d-val.danger { color: var(--red) !important; }
+.d-time { margin-top: 10px; padding: 12px; background: var(--bg-input); border-radius: var(--radius); display: flex; justify-content: space-between; align-items: center; }
+.mono { font-family: var(--font-mono); color: var(--text-secondary); }
+
+@media (max-width: 768px) { .detail-grid { grid-template-columns: 1fr; } }
 </style>
