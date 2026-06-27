@@ -249,13 +249,11 @@ async def predict_all_devices(
     """对所有在线冷藏车进行冷机故障预测"""
     device_list = []
     try:
-        # 优先从 Redis 获取在线设备
         online_devices = await redis_service.get_online_devices()
-        device_list = online_devices if online_devices else []
+        device_list = list(online_devices) if online_devices else []
     except Exception:
-        pass
+        device_list = []
 
-    # 如果没有在线设备数据，生成模拟数据
     if not device_list:
         device_list = [f"VEH-{i:04d}" for i in range(1, 51)]
 
