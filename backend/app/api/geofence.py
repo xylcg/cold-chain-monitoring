@@ -5,7 +5,7 @@
 - 围栏进出事件记录
 - 围栏区域温控衔接监控
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -87,6 +87,110 @@ def _init_default_geofences():
 
 
 _init_default_geofences()
+
+
+# ==================== 围栏事件（必须在 /{geofence_id} 之前注册） ====================
+
+@router.get("/events")
+async def get_geofence_events(
+    geofence_id: Optional[str] = None,
+    device_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = 50,
+    user: dict = Depends(get_current_user),
+):
+    """查询围栏进出事件"""
+    # 如果事件为空，生成一些模拟事件
+    if not _geofence_events:
+        _seed_mock_events()
+
+    events = list(_geofence_events)
+    if geofence_id:
+        events = [e for e in events if e["geofence_id"] == geofence_id]
+    if device_id:
+        events = [e for e in events if e["device_id"] == device_id]
+    if event_type:
+        events = [e for e in events if e["event_type"] == event_type]
+
+    events = sorted(events, key=lambda e: e["timestamp"], reverse=True)
+    return {"count": len(events[:limit]), "events": events[:limit]}
+
+
+@router.post("/events/check")
+async def check_geofence_event(
+    device_id: str,
+    lat: float,
+    lng: float,
+    temperature: float = 0.0,
+):
+    """
+    检查设备是否进入/离开电子围栏
+    由传感器数据上报时自动调用
+    """
+    events = []
+    for gf in _geofences:
+        center = gf["center"]
+        distance = _haversine_distance(lat, lng, center["lat"], center["lng"])
+        is_inside = distance <= gf["radius"]
+
+        event = {
+            "geofence_id": gf["id"],
+            "geofence_name": gf["name"],
+            "device_id": device_id,
+            "is_inside": is_inside,
+            "distance_meters": round(distance, 1),
+            "temperature": temperature,
+            "temp_in_range": (
+                gf["temp_range"]["min"] <= temperature <= gf["temp_range"]["max"]
+            ) if is_inside else True,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        if is_inside:
+            event["event_type"] = "inside"
+            if not event["temp_in_range"]:
+                event["warning"] = f"温度{temperature}°C超出围栏要求[{gf['temp_range']['min']}~{gf['temp_range']['max']}°C]"
+        else:
+            event["event_type"] = "outside"
+
+        _geofence_events.insert(0, event)
+        events.append(event)
+
+    return {"device_id": device_id, "events": events}
+
+
+@router.get("/device/{device_id}/status")
+async def get_device_geofence_status(
+    device_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """获取设备当前围栏状态"""
+    status = await redis_service.get_device_status(device_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="设备离线或不存在")
+
+    lat = float(status.get("latitude", 0))
+    lng = float(status.get("longitude", 0))
+    temperature = float(status.get("temperature", 0))
+
+    fence_status = []
+    for gf in _geofences:
+        center = gf["center"]
+        distance = _haversine_distance(lat, lng, center["lat"], center["lng"])
+        is_inside = distance <= gf["radius"]
+        fence_status.append({
+            "geofence_id": gf["id"],
+            "geofence_name": gf["name"],
+            "is_inside": is_inside,
+            "distance_meters": round(distance, 1),
+        })
+
+    return {
+        "device_id": device_id,
+        "location": {"lat": lat, "lng": lng},
+        "temperature": temperature,
+        "fences": fence_status,
+    }
 
 
 # ==================== 围栏管理 ====================
@@ -185,110 +289,48 @@ async def delete_geofence(
     return {"status": "ok", "deleted": geofence_id}
 
 
-# ==================== 围栏事件 ====================
+# ==================== 辅助函数 ====================
 
-@router.get("/events")
-async def get_geofence_events(
-    geofence_id: Optional[str] = None,
-    device_id: Optional[str] = None,
-    event_type: Optional[str] = None,
-    limit: int = 50,
-    user: dict = Depends(get_current_user),
-):
-    """查询围栏进出事件"""
-    events = _geofence_events
-    if geofence_id:
-        events = [e for e in events if e["geofence_id"] == geofence_id]
-    if device_id:
-        events = [e for e in events if e["device_id"] == device_id]
-    if event_type:
-        events = [e for e in events if e["event_type"] == event_type]
+def _seed_mock_events():
+    """生成模拟进出事件"""
+    import random
+    random.seed(42)
+    device_ids = ["DEV-S001", "DEV-S002", "DEV-S003", "DEV-S004", "DEV-S005"]
+    base_time = datetime.utcnow()
+    for i in range(30):
+        gf = random.choice(_geofences)
+        device_id = random.choice(device_ids)
+        lat_offset = random.uniform(-0.01, 0.01)
+        lng_offset = random.uniform(-0.01, 0.01)
+        is_inside = random.choice([True, True, True, False])
+        temp = round(random.uniform(-28, 28), 1)
+        distance = random.uniform(50, 1200) if not is_inside else random.uniform(20, 450)
+        temp_in_range = True
+        warning = None
+        if is_inside:
+            tr = gf["temp_range"]
+            temp_in_range = tr["min"] <= temp <= tr["max"]
+            if not temp_in_range:
+                warning = f"温度{temp}°C超出围栏要求[{tr['min']}~{tr['max']}°C]"
 
-    events = sorted(events, key=lambda e: e["timestamp"], reverse=True)
-    return {"count": len(events[:limit]), "events": events[:limit]}
-
-
-@router.post("/events/check")
-async def check_geofence_event(
-    device_id: str,
-    lat: float,
-    lng: float,
-    temperature: float = 0.0,
-):
-    """
-    检查设备是否进入/离开电子围栏
-    由传感器数据上报时自动调用
-    """
-    events = []
-    for gf in _geofences:
-        center = gf["center"]
-        distance = _haversine_distance(lat, lng, center["lat"], center["lng"])
-        is_inside = distance <= gf["radius"]
-
-        event = {
+        _geofence_events.append({
             "geofence_id": gf["id"],
             "geofence_name": gf["name"],
             "device_id": device_id,
+            "event_type": "inside" if is_inside else "outside",
             "is_inside": is_inside,
             "distance_meters": round(distance, 1),
-            "temperature": temperature,
-            "temp_in_range": (
-                gf["temp_range"]["min"] <= temperature <= gf["temp_range"]["max"]
-            ) if is_inside else True,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-
-        if is_inside:
-            event["event_type"] = "inside"
-            if not event["temp_in_range"]:
-                event["warning"] = f"温度{temperature}°C超出围栏要求[{gf['temp_range']['min']}~{gf['temp_range']['max']}°C]"
-        else:
-            event["event_type"] = "outside"
-
-        _geofence_events.insert(0, event)
-        events.append(event)
-
-    return {"device_id": device_id, "events": events}
-
-
-@router.get("/device/{device_id}/status")
-async def get_device_geofence_status(
-    device_id: str,
-    user: dict = Depends(get_current_user),
-):
-    """获取设备当前围栏状态"""
-    status = await redis_service.get_device_status(device_id)
-    if not status:
-        raise HTTPException(status_code=404, detail="设备离线或不存在")
-
-    lat = float(status.get("latitude", 0))
-    lng = float(status.get("longitude", 0))
-    temperature = float(status.get("temperature", 0))
-
-    fence_status = []
-    for gf in _geofences:
-        center = gf["center"]
-        distance = _haversine_distance(lat, lng, center["lat"], center["lng"])
-        is_inside = distance <= gf["radius"]
-        fence_status.append({
-            "geofence_id": gf["id"],
-            "geofence_name": gf["name"],
-            "is_inside": is_inside,
-            "distance_meters": round(distance, 1),
+            "temperature": temp,
+            "temp_in_range": temp_in_range,
+            "warning": warning,
+            "timestamp": (base_time - timedelta(minutes=i * 30)).isoformat(),
         })
-
-    return {
-        "device_id": device_id,
-        "location": {"lat": lat, "lng": lng},
-        "temperature": temperature,
-        "fences": fence_status,
-    }
 
 
 def _haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """计算两点间的 Haversine 距离（米）"""
     import math
-    R = 6371000  # 地球半径（米）
+    R = 6371000
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)

@@ -1,83 +1,33 @@
 <template>
   <div class="main-layout">
-    <!-- 玻璃态悬浮导航 -->
-    <nav class="nav-glass">
-      <div class="nav-inner">
-        <router-link to="/dashboard" class="nav-brand" @click="closeMobile">
+    <!-- 顶部导航栏 -->
+    <nav class="top-nav">
+      <div class="nav-inner" @mouseleave="scheduleClose">
+        <!-- Logo -->
+        <router-link to="/dashboard" class="nav-brand">
           <span class="brand-icon">◆</span>
           <span class="brand-text">
             <span class="brand-name">CRYO</span><span class="brand-dot">·</span><span class="brand-sub">TRACK</span>
           </span>
         </router-link>
 
-        <div class="nav-links">
-          <div class="nav-group-label">监控</div>
-          <router-link to="/dashboard" class="nav-link" :class="{ active: activeMenu === '/dashboard' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-            <span>全局态势</span>
-          </router-link>
-          <router-link to="/tracking" class="nav-link" :class="{ active: activeMenu === '/tracking' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 1 0-16 0c0 3 2.7 7 8 11.7z"/></svg>
-            <span>车辆追踪</span>
-          </router-link>
-          <router-link to="/monitor" class="nav-link" :class="{ active: activeMenu === '/monitor' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-            <span>设备监控</span>
-          </router-link>
-          <router-link to="/temperature" class="nav-link" :class="{ active: activeMenu === '/temperature' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-            <span>温度趋势</span>
-          </router-link>
-          <router-link to="/alerts" class="nav-link" :class="{ active: activeMenu === '/alerts' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            <span>告警中心</span>
-            <span v-if="store.kpi.active_alerts > 0" class="nav-badge">{{ store.kpi.active_alerts }}</span>
-          </router-link>
-
-          <div class="nav-group-label">AI 智能</div>
-          <router-link to="/routes" class="nav-link" :class="{ active: activeMenu === '/routes' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="3 12 7 5 17 19 21 12"/></svg>
-            <span>路径规划</span>
-          </router-link>
-          <router-link to="/dispatch" class="nav-link" :class="{ active: activeMenu === '/dispatch' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-            <span>多温区调度</span>
-          </router-link>
-          <router-link to="/maintenance" class="nav-link" :class="{ active: activeMenu === '/maintenance' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-            <span>故障预测</span>
-          </router-link>
-          <router-link to="/quality" class="nav-link" :class="{ active: activeMenu === '/quality' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-            <span>品质评估</span>
-          </router-link>
-
-          <div class="nav-group-label">管理</div>
-          <router-link to="/rules" class="nav-link" :class="{ active: activeMenu === '/rules' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            <span>告警规则</span>
-          </router-link>
-          <router-link to="/geofence" class="nav-link" :class="{ active: activeMenu === '/geofence' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 1 0-16 0c0 3 2.7 7 8 11.7z"/></svg>
-            <span>电子围栏</span>
-          </router-link>
-          <router-link to="/resources" class="nav-link" :class="{ active: activeMenu === '/resources' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-            <span>资源调度</span>
-          </router-link>
-          <router-link to="/traceability" class="nav-link" :class="{ active: activeMenu === '/traceability' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            <span>冷链追溯</span>
-          </router-link>
-          <router-link to="/customer" class="nav-link" :class="{ active: activeMenu === '/customer' }">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span>客户查询</span>
-          </router-link>
-
-
+        <!-- 导航分组 -->
+        <div class="nav-groups">
+          <div
+            v-for="group in navGroups"
+            :key="group.label"
+            class="nav-group"
+            @mouseenter="openDropdown(group.label)"
+          >
+            <div class="nav-group-trigger" :class="{ active: activeDropdown === group.label }">
+              <span>{{ group.label }}</span>
+              <svg class="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+          </div>
         </div>
 
-        <div class="nav-footer">
+        <!-- 右侧 -->
+        <div class="nav-right">
           <div class="nav-user">
             <div class="user-avatar">{{ (store.username || 'A')[0].toUpperCase() }}</div>
             <span class="user-name">{{ store.username || 'admin' }}</span>
@@ -85,6 +35,32 @@
           <button class="btn-logout" @click="handleLogout" title="退出">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
           </button>
+        </div>
+      </div>
+
+      <!-- 下拉面板 -->
+      <div v-show="activeDropdown" class="dropdown-panel" @mouseenter="cancelClose" @mouseleave="scheduleClose">
+        <div class="dropdown-inner">
+          <div class="dropdown-grid" :style="gridStyle">
+            <router-link
+              v-for="item in currentItems"
+              :key="item.path"
+              :to="item.path"
+              class="dropdown-item"
+              :class="{ active: activeMenu === item.path }"
+              @click="activeDropdown = null"
+            >
+              <div class="dropdown-icon">
+                <svg class="item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <g v-html="item.icon"></g>
+                </svg>
+              </div>
+              <div class="dropdown-text">
+                <div class="dropdown-title">{{ item.title }}</div>
+                <div class="dropdown-desc">{{ item.desc }}</div>
+              </div>
+            </router-link>
+          </div>
         </div>
       </div>
     </nav>
@@ -103,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 
@@ -112,13 +88,42 @@ const router = useRouter()
 const store = useAppStore()
 
 const activeMenu = computed(() => route.path)
+const activeDropdown = ref<string | null>(null)
+let closeTimer: ReturnType<typeof setTimeout> | null = null
+
+function openDropdown(label: string) {
+  cancelClose()
+  activeDropdown.value = label
+}
+
+function scheduleClose() {
+  closeTimer = setTimeout(() => {
+    activeDropdown.value = null
+  }, 150)
+}
+
+function cancelClose() {
+  if (closeTimer) {
+    clearTimeout(closeTimer)
+    closeTimer = null
+  }
+}
+
+const currentItems = computed(() => {
+  const group = navGroups.find(g => g.label === activeDropdown.value)
+  return group?.items || []
+})
+
+const gridStyle = computed(() => {
+  const group = navGroups.find(g => g.label === activeDropdown.value)
+  const cols = group?.cols || 2
+  return { gridTemplateColumns: `repeat(${cols}, 1fr)` }
+})
 
 function handleLogout() {
   store.logout()
   router.push('/login')
 }
-
-function closeMobile() {}
 
 onMounted(() => {
   store.startAutoRefresh(10000)
@@ -127,40 +132,71 @@ onMounted(() => {
 onUnmounted(() => {
   store.stopAutoRefresh()
 })
+
+const navGroups = [
+  {
+    label: '监控中心',
+    cols: 3,
+    items: [
+      { path: '/dashboard', title: '全局态势', desc: '实时监控全网冷链状态', icon: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>' },
+      { path: '/tracking', title: '车辆追踪', desc: 'GPS 定位与轨迹回放', icon: '<circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 1 0-16 0c0 3 2.7 7 8 11.7z"/>' },
+      { path: '/monitor', title: '设备监控', desc: '传感器状态在线监测', icon: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>' },
+      { path: '/temperature', title: '温度趋势', desc: '历史温度曲线与预测', icon: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>' },
+      { path: '/alerts', title: '告警中心', desc: '异常预警与实时处理', icon: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>' },
+    ],
+  },
+  {
+    label: 'AI 智能',
+    cols: 2,
+    items: [
+      { path: '/routes', title: '路径规划', desc: '智能冷链配送路径优化', icon: '<polyline points="3 12 7 5 17 19 21 12"/>' },
+      { path: '/dispatch', title: '多温区调度', desc: '车厢温区智能分配', icon: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>' },
+      { path: '/maintenance', title: '故障预测', desc: '冷机设备预测性维护', icon: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>' },
+      { path: '/quality', title: '品质评估', desc: '生鲜品质 AI 评估', icon: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>' },
+    ],
+  },
+  {
+    label: '运营管理',
+    cols: 3,
+    items: [
+      { path: '/rules', title: '告警规则', desc: '规则配置与阈值管理', icon: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"/>' },
+      { path: '/geofence', title: '电子围栏', desc: '地理围栏与越界预警', icon: '<circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 1 0-16 0c0 3 2.7 7 8 11.7z"/>' },
+      { path: '/resources', title: '资源调度', desc: '冷链资源智能分配', icon: '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>' },
+      { path: '/traceability', title: '冷链追溯', desc: '全链路追溯与溯源', icon: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' },
+      { path: '/customer', title: '客户查询', desc: '客户温控查询服务', icon: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>' },
+    ],
+  },
+]
 </script>
 
 <style scoped>
 .main-layout {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
   background: var(--bg-page);
 }
 
-/* ===== 玻璃态悬浮导航 ===== */
-.nav-glass {
+/* ===== 顶部导航栏 ===== */
+.top-nav {
   position: fixed;
   top: 0;
   left: 0;
-  bottom: 0;
-  width: 230px;
-  z-index: 100;
-  padding: 12px;
-  pointer-events: none;
+  right: 0;
+  height: 56px;
+  z-index: 1000;
+  background: #0a0a0a;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .nav-inner {
+  max-width: 1400px;
+  margin: 0 auto;
   height: 100%;
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 18px;
-  padding: 20px 14px 14px;
   display: flex;
-  flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06), 0 1px 4px rgba(0, 0, 0, 0.04);
-  pointer-events: auto;
-  overflow: hidden;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
 }
 
 /* Brand */
@@ -168,17 +204,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 6px 18px;
-  margin-bottom: 8px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   text-decoration: none;
-  cursor: pointer;
+  flex-shrink: 0;
+  margin-right: 32px;
 }
 
 .brand-icon {
   font-size: 20px;
   color: var(--accent);
-  filter: drop-shadow(0 0 6px var(--accent-glow));
+  filter: drop-shadow(0 0 6px rgba(0, 168, 255, 0.4));
 }
 
 .brand-text {
@@ -191,12 +225,11 @@ onUnmounted(() => {
   font-family: var(--font-display);
   font-size: 16px;
   font-weight: 800;
-  color: var(--text-title);
+  color: #fff;
   letter-spacing: 0.06em;
 }
 
 .brand-dot {
-  font-family: var(--font-body);
   color: var(--accent);
   font-weight: 700;
   font-size: 14px;
@@ -206,109 +239,173 @@ onUnmounted(() => {
   font-family: var(--font-display);
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: rgba(255, 255, 255, 0.55);
   letter-spacing: 0.04em;
 }
 
-/* Nav links area */
-.nav-links {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 2px;
-}
-
-.nav-group-label {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding: 10px 8px 4px;
-}
-
-.nav-link {
+/* Nav groups */
+.nav-groups {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
-  border-radius: 10px;
-  color: var(--text-secondary);
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.25s ease;
+  gap: 4px;
+  flex: 1;
+}
+
+.nav-group {
   position: relative;
-  white-space: nowrap;
 }
 
-.nav-link:hover {
-  background: rgba(0, 168, 255, 0.06);
-  color: var(--accent);
+.nav-group-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
 }
 
-.nav-link.active {
-  background: linear-gradient(135deg, rgba(0, 168, 255, 0.1), rgba(124, 58, 237, 0.08));
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.nav-link.active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
-}
-
-.nav-badge {
-  margin-left: auto;
-  min-width: 18px;
-  height: 18px;
-  background: var(--red);
+.nav-group-trigger:hover,
+.nav-group-trigger.active {
   color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chevron {
+  transition: transform 0.2s ease;
+  opacity: 0.6;
+}
+
+.nav-group-trigger.active .chevron {
+  transform: rotate(180deg);
+}
+
+/* Dropdown panel */
+.dropdown-panel {
+  position: absolute;
+  top: 56px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 16px;
+  z-index: 1001;
+  pointer-events: none;
+}
+
+.dropdown-inner {
+  pointer-events: auto;
+  background: #111;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.02);
+  max-width: 800px;
+  width: 100%;
+  margin: 0 24px;
+}
+
+.dropdown-grid {
+  display: grid;
+  gap: 4px;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  text-decoration: none;
+  color: rgba(255, 255, 255, 0.5);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.dropdown-item.active {
+  background: rgba(0, 168, 255, 0.1);
+  color: var(--accent);
+}
+
+.dropdown-item.active .dropdown-title {
+  color: var(--accent);
+}
+
+.dropdown-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 5px;
-  animation: pulse-badge 2s ease-in-out infinite;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.7);
 }
 
-@keyframes pulse-badge {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+.dropdown-item:hover .dropdown-icon {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
-/* Footer */
-.nav-footer {
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
+.dropdown-item.active .dropdown-icon {
+  color: var(--accent);
+  border-color: rgba(0, 168, 255, 0.3);
+  background: rgba(0, 168, 255, 0.08);
+}
+
+.item-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.dropdown-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dropdown-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.3;
+}
+
+.dropdown-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  line-height: 1.4;
+}
+
+/* Right side */
+.nav-right {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
 .nav-user {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0;
 }
 
 .user-avatar {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   background: linear-gradient(135deg, var(--accent), var(--aurora));
   color: #fff;
@@ -318,33 +415,34 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
 }
 
 .user-name {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--text-primary);
-  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.8);
+  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .btn-logout {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   background: transparent;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.5);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.25s;
 }
+
 .btn-logout:hover {
-  border-color: var(--red);
+  border-color: rgba(239, 68, 68, 0.4);
   color: var(--red);
   background: var(--red-bg);
 }
@@ -352,8 +450,7 @@ onUnmounted(() => {
 /* ===== 主内容区 ===== */
 .main-content {
   flex: 1;
-  margin-left: 230px;
-  overflow-y: auto;
+  padding-top: 56px;
   overflow-x: hidden;
   min-height: 100vh;
 }
@@ -361,6 +458,7 @@ onUnmounted(() => {
 .content-padding {
   padding: 28px 32px 60px;
   max-width: 1400px;
+  margin: 0 auto;
 }
 
 /* 页面过渡 */
@@ -368,18 +466,21 @@ onUnmounted(() => {
 .page-fade-leave-active {
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
+
 .page-fade-enter-from {
   opacity: 0;
   transform: translateY(10px);
 }
+
 .page-fade-leave-to {
   opacity: 0;
   transform: translateY(-10px);
 }
 
 @media (max-width: 1024px) {
-  .nav-glass { width: 180px; }
-  .main-content { margin-left: 180px; }
+  .nav-inner { padding: 0 16px; }
+  .dropdown-inner { margin: 0 16px; }
   .content-padding { padding: 20px 16px 40px; }
+  .user-name { display: none; }
 }
 </style>

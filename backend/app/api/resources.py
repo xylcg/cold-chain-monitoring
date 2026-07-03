@@ -226,7 +226,7 @@ async def get_resource_utilization(
         "cold_storage": {
             "avg_utilization": avg_wh_util,
             "total_slots": sum(w["total_slots"] for w in WAREHOUSES),
-            "details": [{"name": w["name"], "utilization": w["overall_utilization"]} for w in wh_utils],
+            "details": [{"name": w["warehouse_name"], "utilization": w["overall_utilization"]} for w in wh_utils],
         },
         "fleet": {
             "utilization": fleet_util,

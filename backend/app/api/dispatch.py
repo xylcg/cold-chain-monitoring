@@ -288,7 +288,7 @@ async def get_dispatch_stats(
         "today_orders": len(orders),
         "today_assigned": result["assigned"],
         "fleet_size": len(vehicles),
-        "fleet_utilization": result["vehicle_utilization"],
+        "fleet_utilization": result["fleet_utilization"],
         "avg_capacity_usage": round(
             sum(a["capacity_utilization"] for a in result["assignments"]) / max(len(result["assignments"]), 1), 1
         ),

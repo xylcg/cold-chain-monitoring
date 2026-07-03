@@ -79,7 +79,7 @@
               <div class="ps-item"><b>{{ dispatchPlan.total_orders }}</b><span>总订单</span></div>
               <div class="ps-item"><b class="text-teal">{{ dispatchPlan.assigned }}</b><span>已分配</span></div>
               <div class="ps-item"><b class="text-amber">{{ dispatchPlan.unassigned }}</b><span>未分配</span></div>
-              <div class="ps-item"><b>{{ dispatchPlan.vehicle_utilization }}%</b><span>车辆利用率</span></div>
+              <div class="ps-item"><b>{{ dispatchPlan.fleet_utilization }}%</b><span>车队利用率</span></div>
             </div>
 
             <div v-for="a in dispatchPlan.assignments" :key="a.assignment_id" class="assignment-card">
@@ -165,7 +165,9 @@ async function loadData() {
     orders.value = oRes.orders || []
     vehicles.value = vRes.vehicles || []
     dispatchStats.value = sRes
-  } catch {}
+  } catch {
+    ElMessage.warning('加载调度数据失败，请检查网络或刷新页面重试')
+  }
 }
 
 async function doAssign() {

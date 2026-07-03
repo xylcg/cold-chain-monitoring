@@ -126,6 +126,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { resourceAPI } from '@/api'
+import { ElMessage } from 'element-plus'
 
 const warehouses = ref<any[]>([])
 const fleetVehicles = ref<any[]>([])
@@ -150,7 +151,9 @@ async function loadData() {
     fleetVehicles.value = vRes.vehicles || []
     coldPlates.value = cpRes.items || []
     utilData.value = uRes
-  } catch {}
+  } catch {
+    ElMessage.warning('加载资源数据失败，请检查网络或刷新页面重试')
+  }
 }
 
 onMounted(() => { loadData() })
