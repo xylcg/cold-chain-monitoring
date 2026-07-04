@@ -67,6 +67,7 @@
 import { ref, watch, onUnmounted, nextTick } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { temperatureAPI } from '@/api'
+import { ElMessage } from 'element-plus'
 import { getTempClass, getRiskType, getRiskLabel } from '@/utils'
 import * as echarts from 'echarts'
 
@@ -93,7 +94,9 @@ async function fetchTrend() {
     anomalyResult.value = anomaly
     await nextTick()
     renderChart()
-  } catch {} finally { loading.value = false }
+  } catch {
+    ElMessage.warning('获取温度趋势失败')
+  } finally { loading.value = false }
 }
 
 function renderChart() {

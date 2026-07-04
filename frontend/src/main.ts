@@ -19,3 +19,14 @@ app.use(createPinia())
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 app.mount('#app')
+
+// PWA: 提示用户安装
+window.addEventListener('beforeinstallprompt', (e) => {
+  // 保存安装事件，可在需要时触发
+  ;(window as any).__pwaInstallEvent = e
+})
+
+// PWA: 安装成功后通知
+window.addEventListener('appinstalled', () => {
+  console.log('PWA 已安装到设备')
+})

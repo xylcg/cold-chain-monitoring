@@ -62,6 +62,11 @@
           <span class="foot-status" :class="{ off: !device.online }">{{ device.online ? '在线' : '离线' }}</span>
           <span class="foot-time">{{ formatTime(device.last_update) }}</span>
         </div>
+        <div class="card-links">
+          <span class="clink" @click.stop="router.push('/temperature')">🌡 温度</span>
+          <span class="clink" @click.stop="router.push('/alerts')">🔔 告警</span>
+          <span class="clink" @click.stop="router.push('/tracking')" v-if="device.device_type === 'vehicle'">📍 定位</span>
+        </div>
       </div>
     </div>
 
@@ -83,10 +88,12 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { getTempClass, formatTime } from '@/utils'
 
 const store = useAppStore()
+const router = useRouter()
 const searchText = ref('')
 const filterType = ref('')
 const showDetail = ref(false)
@@ -180,6 +187,10 @@ function selectDevice(device: any) { selected.value = device; showDetail.value =
 .foot-status { font-size: 11px; color: var(--teal); font-weight: 600; }
 .foot-status.off { color: var(--text-muted); }
 .foot-time { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+
+.card-links { display: flex; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light); }
+.clink { font-size: 10px; font-weight: 600; color: var(--accent); cursor: pointer; padding: 3px 8px; border-radius: 4px; background: var(--accent-bg); transition: all 0.2s; }
+.clink:hover { background: var(--accent); color: #fff; }
 
 /* Detail dialog */
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

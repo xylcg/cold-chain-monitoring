@@ -105,6 +105,26 @@ export const customerAPI = {
     api.get(`/customer/certificate/${waybillId}`),
   getMyOrders: () => api.get('/customer/my-orders'),
   scanQuery: (code: string) => api.get('/customer/scan', { params: { code } }),
+  // 顾客下单
+  createOrder: (data: any) => api.post('/customer/create-order', data),
+  getMyOrdersNew: () => api.get('/customer/my-orders-new'),
+  // 司机接单
+  getAvailableOrders: () => api.get('/customer/available-orders'),
+  acceptOrder: (orderId: string) => api.post(`/customer/accept-order/${orderId}`),
+  acceptOrderWithPhoto: (orderId: string, photoUrl: string) =>
+    api.post(`/customer/accept-order-with-photo/${orderId}`, null, { params: { photo_url: photoUrl } }),
+  getDriverOrders: () => api.get('/customer/driver-orders'),
+  updateOrderStatus: (orderId: string, status: string, photoUrl?: string) =>
+    api.post(`/customer/update-order-status/${orderId}`, null, { params: { status, photo_url: photoUrl || '' } }),
+  // 客户签收确认
+  confirmReceive: (orderId: string) => api.post(`/customer/confirm-receive/${orderId}`),
+  // 删除订单
+  deleteOrder: (orderId: string) => api.delete(`/customer/order/${orderId}`),
+  // P0: 订单实时追踪（温度+车辆位置+告警）
+  getOrderTracking: (orderId: string) => api.get(`/customer/order-tracking/${orderId}`),
+  // P0: 品质反馈
+  submitQualityFeedback: (orderId: string, data: any) => api.post(`/customer/quality-feedback/${orderId}`, data),
+  getQualityFeedback: (orderId: string) => api.get(`/customer/quality-feedback/${orderId}`),
 }
 
 export const vehicleAPI = {
@@ -163,6 +183,15 @@ export const uploadAPI = {
     }),
   getTempRecords: (deviceId?: string, waybillId?: string, limit?: number) =>
     api.get('/upload/temperature-records', { params: { device_id: deviceId, waybill_id: waybillId, limit } }),
+  // 审核相关
+  getPendingReviews: (reviewStatus?: string, limit?: number) =>
+    api.get('/upload/pending-reviews', { params: { review_status: reviewStatus || 'pending_review', limit } }),
+  reviewPhoto: (recordId: string, action: string, notes?: string) =>
+    api.post(`/upload/review/${recordId}`, { action, notes: notes || '' }),
+  getReviewStats: () => api.get('/upload/review-stats'),
+  // 司机查询自己照片的审核状态
+  getDriverPhotos: (orderId?: string) =>
+    api.get('/upload/driver-photos', { params: { order_id: orderId || '' } }),
 }
 
 export const resourceAPI = {
@@ -173,6 +202,16 @@ export const resourceAPI = {
   getUtilization: () => api.get('/resources/utilization'),
   allocate: (resourceType: string, warehouseId?: string) =>
     api.post('/resources/allocate', null, { params: { resource_type: resourceType, warehouse_id: warehouseId } }),
+  // 仓库库存管理
+  getWarehouseInventory: (params?: any) => api.get('/resources/warehouse-inventory', { params }),
+  warehouseInbound: (data: any) => api.post('/resources/warehouse-inbound', data),
+  warehouseOutbound: (inventoryId: string, quantityKg: number, notes?: string) =>
+    api.post('/resources/warehouse-outbound', null, { params: { inventory_id: inventoryId, quantity_kg: quantityKg, notes: notes || '' } }),
+  getWarehouseInventorySummary: () => api.get('/resources/warehouse-inventory-summary'),
+  // 老板经营数据
+  getBossFinance: () => api.get('/resources/boss-finance'),
+  getBossDriverPerformance: () => api.get('/resources/boss-driver-performance'),
+  getBossCustomerAnalysis: () => api.get('/resources/boss-customer-analysis'),
 }
 
 export default api

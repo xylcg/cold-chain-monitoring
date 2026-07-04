@@ -794,7 +794,15 @@ async def get_batches(category: str = None, grade: str = None):
         cur.close()
         return {"success": True, "batches": batches}
     except Exception as e:
-        return {"success": False, "message": str(e), "batches": []}
+        # 数据库不可用时，使用统一世界状态
+        from ..services.world_state import get_world_state
+        ws = get_world_state()
+        batches = ws["quality_batches"]
+        if category:
+            batches = [b for b in batches if b.get("category") == category]
+        if grade:
+            batches = [b for b in batches if b.get("grade") == grade]
+        return {"success": True, "batches": batches, "data_source": "unified"}
     finally:
         if conn:
             conn.close()
@@ -842,11 +850,19 @@ async def get_stats():
             "products_supported": products_supported,
         }
     except Exception as e:
+        # 数据库不可用时，使用统一世界状态
+        from ..services.world_state import get_world_state
+        ws = get_world_state()
+        batches = ws["quality_batches"]
+        total = len(batches)
+        defect_count = sum(1 for b in batches if b.get("defect_detected"))
+        avg_score = round(sum(b.get("quality_score", 0) for b in batches) / max(total, 1), 1)
         return {
-            "total_batches": 0,
-            "defect_rate": 0,
-            "avg_quality_score": 0,
+            "total_batches": total,
+            "defect_rate": round(defect_count / max(total, 1) * 100, 1),
+            "avg_quality_score": avg_score,
             "products_supported": len(PRODUCT_CATEGORIES),
+            "data_source": "unified",
         }
     finally:
         if conn:

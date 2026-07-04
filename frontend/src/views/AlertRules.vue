@@ -104,7 +104,7 @@ function getSeverityLabel(severity: string) {
 }
 
 async function fetchRules() {
-  try { const data: any = await alertAPI.getRules(); rules.value = data.rules || [] } catch {}
+  try { const data: any = await alertAPI.getRules(); rules.value = data.rules || [] } catch { ElMessage.warning('加载告警规则失败') }
 }
 async function addRule() {
   try {
@@ -112,10 +112,10 @@ async function addRule() {
     ElMessage.success('规则添加成功')
     showAddDialog.value = false; fetchRules()
     newRule.value = { rule_name: '', rule_type: '', condition_field: 'temperature', condition_operator: '>', condition_value: 8.0, severity: 'severe', cooldown_seconds: 300 }
-  } catch {}
+  } catch { ElMessage.error('添加规则失败') }
 }
 async function deleteRule(ruleType: string) {
-  try { await alertAPI.deleteRule(ruleType); ElMessage.success('规则已删除'); fetchRules() } catch {}
+  try { await alertAPI.deleteRule(ruleType); ElMessage.success('规则已删除'); fetchRules() } catch { ElMessage.error('删除规则失败') }
 }
 
 onMounted(() => { fetchRules() })

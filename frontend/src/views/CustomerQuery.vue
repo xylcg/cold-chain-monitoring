@@ -164,7 +164,7 @@ async function downloadCertificate() {
   } catch { ElMessage.error('下载失败') }
 }
 
-async function loadMyOrders() { try { const res = await customerAPI.getMyOrders(); myOrders.value = res.orders || [] } catch {} }
+async function loadMyOrders() { try { const res = await customerAPI.getMyOrders(); myOrders.value = res.orders || [] } catch { ElMessage.warning('加载订单失败') } }
 
 onMounted(loadMyOrders)
 </script>

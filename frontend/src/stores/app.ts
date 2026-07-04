@@ -3,10 +3,10 @@ import { ref } from 'vue'
 import { dashboardAPI, alertAPI } from '@/api'
 
 export const useAppStore = defineStore('app', () => {
-  // 用户
+  // 用户（持久化到 localStorage）
   const token = ref(localStorage.getItem('token') || '')
-  const username = ref('')
-  const userRole = ref('')
+  const username = ref(localStorage.getItem('username') || '')
+  const userRole = ref(localStorage.getItem('userRole') || '')
 
   // KPI 数据
   const kpi = ref({
@@ -74,11 +74,21 @@ export const useAppStore = defineStore('app', () => {
     localStorage.setItem('token', t)
   }
 
+  function setUserInfo(name: string, role: string) {
+    username.value = name
+    userRole.value = role
+    localStorage.setItem('username', name)
+    localStorage.setItem('userRole', role)
+  }
+
   function logout() {
     token.value = ''
     username.value = ''
     userRole.value = ''
     localStorage.removeItem('token')
+    localStorage.removeItem('username')
+    localStorage.removeItem('userRole')
+    localStorage.removeItem('user')
   }
 
   return {
@@ -86,6 +96,6 @@ export const useAppStore = defineStore('app', () => {
     kpi, devices, selectedDevice, activeAlerts,
     fetchKPI, fetchDevices, fetchAlerts,
     startAutoRefresh, stopAutoRefresh,
-    setToken, logout,
+    setToken, setUserInfo, logout,
   }
 })

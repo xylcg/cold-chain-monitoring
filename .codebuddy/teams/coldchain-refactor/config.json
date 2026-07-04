@@ -1,0 +1,18 @@
+{
+  "name": "coldchain-refactor",
+  "leadAgentId": "f100411d3929441e8490b3f150b5fade",
+  "workspacePath": "c:/Users/18356/Desktop/11111",
+  "createdAt": "2026-07-03T13:13:11.652Z",
+  "options": {
+    "workspacePath": "c:/Users/18356/Desktop/11111",
+    "isAutoTeam": false
+  },
+  "members": [
+    {
+      "memberId": "team-lead@coldchain-refactor",
+      "name": "team-lead",
+      "role": "Team Lead - coordinates the team and interacts with the user"
+    }
+  ],
+  "isAutoTeam": false
+}

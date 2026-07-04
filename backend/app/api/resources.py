@@ -1,19 +1,21 @@
 """
 冷链资源智能调度 API
 模块10: 冷链资源智能调度
-- 冷库库位管理
-- 冷藏车辆资源池
-- 蓄冷板/冰排管理
-- 资源利用统计
+使用统一世界状态，确保数据跨页面联通
 """
 import random
 import math
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..core.security import get_current_user
+from ..services.world_state import get_world_state
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/resources", tags=["资源调度"])
 
@@ -91,23 +93,37 @@ def _get_warehouse_utilization(warehouse_id: str) -> dict:
 async def get_warehouses(
     user: dict = Depends(get_current_user),
 ):
-    """获取冷库列表及利用率"""
+    """获取冷库列表及利用率 - 来自统一世界状态"""
+    ws = get_world_state()
     result = []
     total_used = 0
     total_slots = 0
 
-    for wh in WAREHOUSES:
-        util = _get_warehouse_utilization(wh["id"])
-        result.append(util)
-        total_used += util["total_used"]
-        total_slots += util["total_slots"]
+    for wh in ws["warehouses"]:
+        result.append({
+            "warehouse_id": wh["id"],
+            "warehouse_name": wh["name"],
+            "location": wh["location"],
+            "slots": {
+                "frozen": {"total": wh["frozen_slots"], "used": wh["frozen_used"], "rate": wh["frozen_util"]},
+                "refrigerated": {"total": wh["refrigerated_slots"], "used": wh["refrigerated_used"], "rate": wh["refrigerated_util"]},
+                "ambient": {"total": wh["ambient_slots"], "used": wh["ambient_used"], "rate": wh["ambient_util"]},
+            },
+            "total_used": wh["total_used"],
+            "total_slots": wh["total_slots"],
+            "overall_utilization": wh["utilization"],
+            "updated_at": ws["timestamp"],
+        })
+        total_used += wh["total_used"]
+        total_slots += wh["total_slots"]
 
     return {
-        "total_warehouses": len(WAREHOUSES),
+        "total_warehouses": len(ws["warehouses"]),
         "total_slots": total_slots,
         "total_used": total_used,
         "overall_utilization": round(total_used / total_slots * 100, 1) if total_slots > 0 else 0,
         "warehouses": result,
+        "data_source": "unified",
     }
 
 
@@ -195,16 +211,16 @@ async def get_cold_plates(
 async def get_resource_utilization(
     user: dict = Depends(get_current_user),
 ):
-    """综合资源利用率统计"""
+    """综合资源利用率统计 - 来自统一世界状态"""
+    ws = get_world_state()
+
     # 冷库利用率
-    wh_utils = [_get_warehouse_utilization(wh["id"]) for wh in WAREHOUSES]
-    avg_wh_util = round(sum(w["overall_utilization"] for w in wh_utils) / len(wh_utils), 1)
+    avg_wh_util = round(sum(w["utilization"] for w in ws["warehouses"]) / max(len(ws["warehouses"]), 1), 1)
 
     # 车辆利用率
     vehicles = FLEET_VEHICLES
     total_vehicles = len(vehicles)
-    in_use = sum(1 for v in vehicles if v["status"] == "in_use")
-    available = sum(1 for v in vehicles if v["status"] == "available")
+    in_use = len(ws["vehicles"])
     fleet_util = round(in_use / total_vehicles * 100, 1)
 
     # 蓄冷板利用率
@@ -212,27 +228,28 @@ async def get_resource_utilization(
     in_use_plate = sum(cp["in_use"] for cp in COLD_PLATES)
     plate_util = round(in_use_plate / (total_plate + in_use_plate) * 100, 1)
 
-    # 模拟能耗统计
+    # 能耗统计（基于车辆数据）
     now = datetime.utcnow()
     energy_trend = []
     for i in range(24):
         hour = (now - timedelta(hours=23 - i)).hour
+        base = 180 + 80 * math.sin((hour - 6) * math.pi / 12)
         energy_trend.append({
             "hour": f"{hour:02d}:00",
-            "power_kwh": round(random.uniform(180, 350), 1),
+            "power_kwh": round(base + random.uniform(-20, 30), 1),
         })
 
     return {
         "cold_storage": {
             "avg_utilization": avg_wh_util,
-            "total_slots": sum(w["total_slots"] for w in WAREHOUSES),
-            "details": [{"name": w["warehouse_name"], "utilization": w["overall_utilization"]} for w in wh_utils],
+            "total_slots": sum(w["total_slots"] for w in ws["warehouses"]),
+            "details": [{"name": w["name"], "utilization": w["utilization"]} for w in ws["warehouses"]],
         },
         "fleet": {
             "utilization": fleet_util,
             "total": total_vehicles,
             "in_use": in_use,
-            "available": available,
+            "available": total_vehicles - in_use,
         },
         "cold_plates": {
             "utilization": plate_util,
@@ -240,11 +257,12 @@ async def get_resource_utilization(
             "in_use": in_use_plate,
         },
         "energy": {
-            "total_kwh_today": round(random.uniform(4000, 6000), 1),
-            "avg_power_kw": round(random.uniform(200, 280), 1),
+            "total_kwh_today": round(sum(e["power_kwh"] for e in energy_trend), 1),
+            "avg_power_kw": round(sum(e["power_kwh"] for e in energy_trend) / 24, 1),
             "trend_24h": energy_trend,
         },
         "updated_at": now.isoformat(),
+        "data_source": "unified",
     }
 
 
@@ -352,3 +370,375 @@ async def get_resource_forecast(
         "peak_demand_hour": max(forecast, key=lambda f: f["warehouse_demand"])["time"],
         "forecast_data": forecast,
     }
+
+
+# ==================== 仓库入库/出库/盘点 API（仓管功能） ====================
+
+# 内存存储库存记录
+warehouse_inventory = []
+_inv_counter = 0
+
+
+def _init_inventory():
+    """初始化仓库库存模拟数据"""
+    global warehouse_inventory, _inv_counter
+    if warehouse_inventory:
+        return
+    products = [
+        ("冷冻牛肉", "frozen", "肉类", -20), ("冷冻海鲜", "frozen", "海鲜", -22),
+        ("冰淇淋", "frozen", "乳制品", -18), ("速冻水饺", "frozen", "面食", -18),
+        ("鲜牛奶", "refrigerated", "乳制品", 2), ("草莓", "refrigerated", "水果", 1),
+        ("三文鱼", "refrigerated", "海鲜", 0), ("鲜切花", "refrigerated", "花卉", 3),
+        ("苹果", "ambient", "水果", 18), ("土豆", "ambient", "蔬菜", 16),
+        ("巧克力", "ambient", "零食", 20), ("药品", "ambient", "医药", 20),
+    ]
+    now = datetime.utcnow()
+    for i, (name, zone, cat, temp) in enumerate(products):
+        for wh in WAREHOUSES:
+            _inv_counter += 1
+            warehouse_inventory.append({
+                "id": f"INV-{_inv_counter:04d}",
+                "warehouse_id": wh["id"],
+                "warehouse_name": wh["name"],
+                "product_name": name,
+                "category": cat,
+                "zone": zone,
+                "zone_label": {"frozen": "冷冻区", "refrigerated": "冷藏区", "ambient": "恒温区"}[zone],
+                "target_temp_c": temp,
+                "quantity_kg": random.randint(500, 8000),
+                "unit": "kg",
+                "shelf_life_days": random.randint(5, 180),
+                "production_date": (now - timedelta(days=random.randint(1, 60))).strftime("%Y-%m-%d"),
+                "expiry_date": (now + timedelta(days=random.randint(3, 120))).strftime("%Y-%m-%d"),
+                "status": "normal",  # normal / near_expiry / expired
+                "last_updated": now.isoformat(),
+            })
+
+    # 标记部分临近过期
+    for item in warehouse_inventory[:6]:
+        item["status"] = "near_expiry"
+        item["expiry_date"] = (now + timedelta(days=random.randint(1, 5))).strftime("%Y-%m-%d")
+
+_init_inventory()
+
+
+@router.get("/warehouse-inventory")
+async def get_warehouse_inventory(
+    warehouse_id: str = Query(default=""),
+    zone: str = Query(default=""),
+    status: str = Query(default=""),
+    keyword: str = Query(default=""),
+    user: dict = Depends(get_current_user),
+):
+    """获取仓库库存列表 - 支持按仓库/温区/状态/关键词筛选"""
+    items = warehouse_inventory
+    if warehouse_id:
+        items = [i for i in items if i["warehouse_id"] == warehouse_id]
+    if zone:
+        items = [i for i in items if i["zone"] == zone]
+    if status:
+        items = [i for i in items if i["status"] == status]
+    if keyword:
+        kw = keyword.lower()
+        items = [i for i in items if kw in i["product_name"].lower() or kw in i["category"].lower()]
+
+    # 统计
+    total_qty = sum(i["quantity_kg"] for i in items)
+    normal_count = sum(1 for i in items if i["status"] == "normal")
+    near_expiry_count = sum(1 for i in items if i["status"] == "near_expiry")
+    expired_count = sum(1 for i in items if i["status"] == "expired")
+
+    return {
+        "code": 200,
+        "message": "查询成功",
+        "data": {
+            "total": len(items),
+            "total_quantity_kg": total_qty,
+            "stats": {
+                "normal": normal_count,
+                "near_expiry": near_expiry_count,
+                "expired": expired_count,
+            },
+            "items": sorted(items, key=lambda x: x["last_updated"], reverse=True),
+        },
+    }
+
+
+class StockOperation(BaseModel):
+    warehouse_id: str
+    product_name: str
+    zone: str  # frozen/refrigerated/ambient
+    category: str = ""
+    quantity_kg: float
+    target_temp_c: float = 0
+    shelf_life_days: int = 30
+    notes: str = ""
+
+
+@router.post("/warehouse-inbound")
+async def warehouse_inbound(
+    body: StockOperation,
+    user: dict = Depends(get_current_user),
+):
+    """仓库入库操作"""
+    global _inv_counter
+    wh = next((w for w in WAREHOUSES if w["id"] == body.warehouse_id), None)
+    if not wh:
+        return JSONResponse(status_code=404, content={"code": 404, "message": "冷库不存在"})
+
+    now = datetime.utcnow()
+    zone_label = {"frozen": "冷冻区", "refrigerated": "冷藏区", "ambient": "恒温区"}.get(body.zone, body.zone)
+    _inv_counter += 1
+
+    item = {
+        "id": f"INV-{_inv_counter:04d}",
+        "warehouse_id": body.warehouse_id,
+        "warehouse_name": wh["name"],
+        "product_name": body.product_name,
+        "category": body.category or "其他",
+        "zone": body.zone,
+        "zone_label": zone_label,
+        "target_temp_c": body.target_temp_c,
+        "quantity_kg": body.quantity_kg,
+        "unit": "kg",
+        "shelf_life_days": body.shelf_life_days,
+        "production_date": now.strftime("%Y-%m-%d"),
+        "expiry_date": (now + timedelta(days=body.shelf_life_days)).strftime("%Y-%m-%d"),
+        "status": "normal",
+        "last_updated": now.isoformat(),
+    }
+    warehouse_inventory.append(item)
+    logger.info(f"入库: {body.product_name} x {body.quantity_kg}kg → {wh['name']} {zone_label}")
+
+    return {
+        "code": 200,
+        "message": f"入库成功：{body.product_name} {body.quantity_kg}kg → {wh['name']} {zone_label}",
+        "data": item,
+    }
+
+
+@router.post("/warehouse-outbound")
+async def warehouse_outbound(
+    inventory_id: str = Query(...),
+    quantity_kg: float = Query(...),
+    notes: str = Query(default=""),
+    user: dict = Depends(get_current_user),
+):
+    """仓库出库操作"""
+    target = None
+    for item in warehouse_inventory:
+        if item["id"] == inventory_id:
+            target = item
+            break
+    if not target:
+        return JSONResponse(status_code=404, content={"code": 404, "message": "库存记录不存在"})
+
+    if quantity_kg > target["quantity_kg"]:
+        return JSONResponse(status_code=400, content={"code": 400, "message": f"库存不足，当前仅剩 {target['quantity_kg']}kg"})
+
+    target["quantity_kg"] -= quantity_kg
+    target["last_updated"] = datetime.utcnow().isoformat()
+
+    if target["quantity_kg"] <= 0:
+        warehouse_inventory.remove(target)
+        logger.info(f"出库清空: {target['product_name']} {quantity_kg}kg ← {target['warehouse_name']}")
+        return {
+            "code": 200,
+            "message": f"出库成功（库存已清空）：{target['product_name']} {quantity_kg}kg ← {target['warehouse_name']}",
+            "data": {"remaining_kg": 0},
+        }
+
+    logger.info(f"出库: {target['product_name']} {quantity_kg}kg ← {target['warehouse_name']}，剩余 {target['quantity_kg']}kg")
+    return {
+        "code": 200,
+        "message": f"出库成功：{target['product_name']} {quantity_kg}kg ← {target['warehouse_name']}，剩余 {target['quantity_kg']}kg",
+        "data": {"remaining_kg": target["quantity_kg"]},
+    }
+
+
+@router.get("/warehouse-inventory-summary")
+async def warehouse_inventory_summary(
+    user: dict = Depends(get_current_user),
+):
+    """仓库库存总览 - 各仓库各温区库存汇总"""
+    summary = {}
+    for item in warehouse_inventory:
+        wh_id = item["warehouse_id"]
+        if wh_id not in summary:
+            wh = next((w for w in WAREHOUSES if w["id"] == wh_id), None)
+            summary[wh_id] = {
+                "warehouse_id": wh_id,
+                "warehouse_name": wh["name"] if wh else wh_id,
+                "location": wh["location"] if wh else "",
+                "frozen_kg": 0, "refrigerated_kg": 0, "ambient_kg": 0,
+                "frozen_count": 0, "refrigerated_count": 0, "ambient_count": 0,
+                "near_expiry_count": 0, "expired_count": 0,
+            }
+        s = summary[wh_id]
+        s[f"{item['zone']}_kg"] += item["quantity_kg"]
+        s[f"{item['zone']}_count"] += 1
+        if item["status"] == "near_expiry":
+            s["near_expiry_count"] += 1
+        elif item["status"] == "expired":
+            s["expired_count"] += 1
+
+    result = list(summary.values())
+    for s in result:
+        s["total_kg"] = s["frozen_kg"] + s["refrigerated_kg"] + s["ambient_kg"]
+
+    return {
+        "code": 200,
+        "message": "查询成功",
+        "data": {
+            "total_warehouses": len(result),
+            "total_kg": sum(s["total_kg"] for s in result),
+            "total_near_expiry": sum(s["near_expiry_count"] for s in result),
+            "total_expired": sum(s["expired_count"] for s in result),
+            "details": sorted(result, key=lambda x: -x["total_kg"]),
+        },
+    }
+
+
+# ==================== 老板经营数据 API ====================
+
+@router.get("/boss-finance")
+async def get_boss_finance(
+    user: dict = Depends(get_current_user),
+):
+    """老板经营看板 - 财务数据"""
+    now = datetime.utcnow()
+    random.seed(now.day)
+
+    # 月度收入
+    monthly_revenue = random.randint(2800000, 4200000)
+    monthly_cost = random.randint(1800000, 2800000)
+    monthly_profit = monthly_revenue - monthly_cost
+    profit_margin = round(monthly_profit / monthly_revenue * 100, 1)
+
+    # 本周每日收入趋势
+    daily_revenue = []
+    for i in range(7):
+        d = now - timedelta(days=6 - i)
+        daily_revenue.append({
+            "date": d.strftime("%m/%d"),
+            "weekday": ["日", "一", "二", "三", "四", "五", "六"][d.weekday()],
+            "revenue": random.randint(350000, 650000),
+            "orders": random.randint(18, 42),
+            "cost": random.randint(220000, 420000),
+        })
+
+    # 成本构成
+    cost_breakdown = [
+        {"name": "车辆油耗", "amount": random.randint(400000, 600000), "pct": 0},
+        {"name": "冷库电费", "amount": random.randint(300000, 500000), "pct": 0},
+        {"name": "司机工资", "amount": random.randint(350000, 500000), "pct": 0},
+        {"name": "维修保养", "amount": random.randint(150000, 300000), "pct": 0},
+        {"name": "保险税费", "amount": random.randint(100000, 250000), "pct": 0},
+        {"name": "仓储人工", "amount": random.randint(200000, 350000), "pct": 0},
+        {"name": "蓄冷板耗材", "amount": random.randint(80000, 180000), "pct": 0},
+        {"name": "其他运营", "amount": random.randint(100000, 200000), "pct": 0},
+    ]
+    total_cost = sum(c["amount"] for c in cost_breakdown)
+    for c in cost_breakdown:
+        c["pct"] = round(c["amount"] / total_cost * 100, 1)
+
+    return {
+        "code": 200,
+        "message": "查询成功",
+        "data": {
+            "month": now.strftime("%Y年%m月"),
+            "monthly_revenue": monthly_revenue,
+            "monthly_cost": monthly_cost,
+            "monthly_profit": monthly_profit,
+            "profit_margin": profit_margin,
+            "daily_revenue": daily_revenue,
+            "cost_breakdown": cost_breakdown,
+            "updated_at": now.isoformat(),
+        },
+    }
+
+
+@router.get("/boss-driver-performance")
+async def get_driver_performance(
+    user: dict = Depends(get_current_user),
+):
+    """老板经营看板 - 司机绩效"""
+    now = datetime.utcnow()
+    random.seed(now.day)
+
+    driver_names = ["张伟", "李强", "王磊", "赵明", "刘洋", "陈军", "周鹏", "吴斌",
+                    "郑刚", "钱勇", "孙涛", "杨峰", "黄健", "林辉", "何勇", "马超"]
+    drivers = []
+    for i, name in enumerate(driver_names[:10]):
+        total = random.randint(80, 150)
+        on_time = random.randint(int(total * 0.75), total)
+        drivers.append({
+            "driver_id": f"DRV-{i+1:03d}",
+            "name": name,
+            "vehicle_plate": f"冷A-{8000 + i + 1}",
+            "monthly_orders": total,
+            "on_time_orders": on_time,
+            "on_time_rate": round(on_time / total * 100, 1),
+            "total_mileage_km": random.randint(3000, 12000),
+            "fuel_cost_yuan": random.randint(8000, 25000),
+            "customer_rating": round(random.uniform(4.2, 5.0), 1),
+            "temp_violations": random.randint(0, 8),
+            "performance_score": round(random.uniform(78, 98), 1),
+        })
+
+    drivers.sort(key=lambda d: -d["performance_score"])
+
+    return {
+        "code": 200,
+        "message": "查询成功",
+        "data": {
+            "total_drivers": len(drivers),
+            "avg_on_time_rate": round(sum(d["on_time_rate"] for d in drivers) / len(drivers), 1),
+            "avg_rating": round(sum(d["customer_rating"] for d in drivers) / len(drivers), 1),
+            "total_violations": sum(d["temp_violations"] for d in drivers),
+            "drivers": drivers,
+            "updated_at": now.isoformat(),
+        },
+    }
+
+
+@router.get("/boss-customer-analysis")
+async def get_customer_analysis(
+    user: dict = Depends(get_current_user),
+):
+    """老板经营看板 - 客户分析"""
+    now = datetime.utcnow()
+    random.seed(now.day)
+
+    customers = [
+        {"name": "永辉超市", "industry": "连锁零售", "monthly_orders": random.randint(40, 80), "monthly_revenue": random.randint(400000, 900000)},
+        {"name": "盒马鲜生", "industry": "新零售", "monthly_orders": random.randint(35, 70), "monthly_revenue": random.randint(350000, 850000)},
+        {"name": "美团优选", "industry": "社区团购", "monthly_orders": random.randint(50, 100), "monthly_revenue": random.randint(300000, 700000)},
+        {"name": "京东冷链", "industry": "电商物流", "monthly_orders": random.randint(30, 60), "monthly_revenue": random.randint(500000, 1000000)},
+        {"name": "海底捞", "industry": "餐饮连锁", "monthly_orders": random.randint(20, 45), "monthly_revenue": random.randint(250000, 550000)},
+        {"name": "百果园", "industry": "水果零售", "monthly_orders": random.randint(25, 55), "monthly_revenue": random.randint(200000, 450000)},
+        {"name": "伊利集团", "industry": "乳制品", "monthly_orders": random.randint(15, 35), "monthly_revenue": random.randint(300000, 600000)},
+        {"name": "国药集团", "industry": "医药", "monthly_orders": random.randint(10, 25), "monthly_revenue": random.randint(400000, 800000)},
+    ]
+
+    for c in customers:
+        c["avg_order_value"] = round(c["monthly_revenue"] / max(c["monthly_orders"], 1), 0)
+
+    customers.sort(key=lambda c: -c["monthly_revenue"])
+
+    total_revenue = sum(c["monthly_revenue"] for c in customers)
+
+    return {
+        "code": 200,
+        "message": "查询成功",
+        "data": {
+            "total_customers": len(customers),
+            "total_monthly_revenue": total_revenue,
+            "avg_order_value": round(sum(c["avg_order_value"] for c in customers) / len(customers), 0),
+            "customers": customers,
+            "updated_at": now.isoformat(),
+        },
+    }
+
+
+

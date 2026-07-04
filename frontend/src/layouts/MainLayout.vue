@@ -4,7 +4,7 @@
     <nav class="top-nav">
       <div class="nav-inner" @mouseleave="scheduleClose">
         <!-- Logo -->
-        <router-link to="/dashboard" class="nav-brand">
+        <router-link :to="homePath" class="nav-brand">
           <span class="brand-icon">◆</span>
           <span class="brand-text">
             <span class="brand-name">CRYO</span><span class="brand-dot">·</span><span class="brand-sub">TRACK</span>
@@ -30,7 +30,10 @@
         <div class="nav-right">
           <div class="nav-user">
             <div class="user-avatar">{{ (store.username || 'A')[0].toUpperCase() }}</div>
-            <span class="user-name">{{ store.username || 'admin' }}</span>
+            <div class="user-info">
+              <span class="user-name">{{ store.username || 'admin' }}</span>
+              <span class="user-role" :class="'role-' + userRole">{{ roleLabel }}</span>
+            </div>
           </div>
           <button class="btn-logout" @click="handleLogout" title="退出">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -91,6 +94,17 @@ const activeMenu = computed(() => route.path)
 const activeDropdown = ref<string | null>(null)
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
+// 角色
+const userRole = computed(() => store.userRole || 'admin')
+const roleLabel = computed(() => {
+  const m: Record<string, string> = { admin: '调度员', driver: '司机', warehouse: '仓管维修', customer: '顾客' }
+  return m[userRole.value] || '调度员'
+})
+const homePath = computed(() => {
+  if (userRole.value === 'warehouse') return '/warehouse'
+  return '/dashboard'
+})
+
 function openDropdown(label: string) {
   cancelClose()
   activeDropdown.value = label
@@ -110,12 +124,12 @@ function cancelClose() {
 }
 
 const currentItems = computed(() => {
-  const group = navGroups.find(g => g.label === activeDropdown.value)
+  const group = navGroups.value.find(g => g.label === activeDropdown.value)
   return group?.items || []
 })
 
 const gridStyle = computed(() => {
-  const group = navGroups.find(g => g.label === activeDropdown.value)
+  const group = navGroups.value.find(g => g.label === activeDropdown.value)
   const cols = group?.cols || 2
   return { gridTemplateColumns: `repeat(${cols}, 1fr)` }
 })
@@ -125,20 +139,41 @@ function handleLogout() {
   router.push('/login')
 }
 
-onMounted(() => {
-  store.startAutoRefresh(10000)
-})
+// 路由角色映射（用于导航过滤）- admin/warehouse 仅 PC 端
+const routeRoles: Record<string, string[]> = {
+  '/dashboard': ['admin'],
+  '/boss': ['admin'],
+  '/warehouse': ['warehouse'],
+  '/tracking': ['admin', 'warehouse'],
+  '/monitor': ['admin'],
+  '/temperature': ['admin', 'warehouse'],
+  '/alerts': ['admin', 'warehouse'],
+  '/dispatch': ['admin', 'warehouse'],
+  '/maintenance': ['warehouse'],
+  '/quality': ['warehouse'],
+  '/rules': ['admin'],
+  '/geofence': ['admin'],
+  '/resources': ['admin', 'warehouse'],
+  '/traceability': ['admin', 'warehouse'],
+  '/customer': ['admin', 'warehouse'],
+  '/manager-orders': ['admin', 'warehouse'],
+}
 
-onUnmounted(() => {
-  store.stopAutoRefresh()
-})
+function hasAccess(path: string): boolean {
+  const roles = routeRoles[path]
+  if (!roles) return true
+  return roles.includes(userRole.value)
+}
 
-const navGroups = [
+// 基础导航定义
+const allNavGroups = [
   {
     label: '监控中心',
     cols: 3,
     items: [
       { path: '/dashboard', title: '全局态势', desc: '实时监控全网冷链状态', icon: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>' },
+      { path: '/boss', title: '老板工作台', desc: '冷链运营全局态势总览', icon: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-3.5-3.5L15 14l-3-3-3 3"/><path d="M15 14v7"/><path d="M9 17v4"/>' },
+      { path: '/warehouse', title: '仓管维修工作台', desc: '品质质检 · 冷机故障预测', icon: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>' },
       { path: '/tracking', title: '车辆追踪', desc: 'GPS 定位与轨迹回放', icon: '<circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 1 0-16 0c0 3 2.7 7 8 11.7z"/>' },
       { path: '/monitor', title: '设备监控', desc: '传感器状态在线监测', icon: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>' },
       { path: '/temperature', title: '温度趋势', desc: '历史温度曲线与预测', icon: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>' },
@@ -164,9 +199,28 @@ const navGroups = [
       { path: '/resources', title: '资源调度', desc: '冷链资源智能分配', icon: '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>' },
       { path: '/traceability', title: '冷链追溯', desc: '全链路追溯与溯源', icon: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>' },
       { path: '/customer', title: '客户查询', desc: '客户温控查询服务', icon: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>' },
+      { path: '/manager-orders', title: '订单管理', desc: '创建运单 · 调度分配 · 司机消息', icon: '<rect x="2" y="2" width="20" height="20" rx="2"/><line x1="2" y1="7" x2="22" y2="7"/><line x1="7" y1="7" x2="7" y2="22"/><rect x="10" y="11" width="5" height="3" rx="1"/><rect x="10" y="16" width="8" height="3" rx="1"/>' },
     ],
   },
 ]
+
+// 根据角色过滤导航
+const navGroups = computed(() => {
+  return allNavGroups
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => hasAccess(item.path)),
+    }))
+    .filter(group => group.items.length > 0)
+})
+
+onMounted(() => {
+  store.startAutoRefresh(10000)
+})
+
+onUnmounted(() => {
+  store.stopAutoRefresh()
+})
 </script>
 
 <style scoped>
@@ -417,6 +471,12 @@ const navGroups = [
   justify-content: center;
 }
 
+.user-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
 .user-name {
   font-size: 13px;
   font-weight: 500;
@@ -425,6 +485,41 @@ const navGroups = [
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.user-role {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 0px 5px;
+  border-radius: 3px;
+  line-height: 1.6;
+  display: inline-block;
+  max-width: fit-content;
+}
+
+.role-admin {
+  background: rgba(0, 168, 255, 0.15);
+  color: var(--accent);
+}
+
+.role-manager {
+  background: rgba(124, 58, 237, 0.15);
+  color: var(--aurora);
+}
+
+.role-driver {
+  background: rgba(0, 210, 160, 0.15);
+  color: var(--teal);
+}
+
+.role-warehouse {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--amber);
+}
+
+.role-customer {
+  background: rgba(236, 72, 153, 0.15);
+  color: #ec4899;
 }
 
 .btn-logout {

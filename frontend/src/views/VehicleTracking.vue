@@ -128,6 +128,10 @@
             <button class="btn-trajectory" @click="loadTrajectory(selectedVehicle.device_id)" :disabled="trajectoryLoading">
               {{ trajectoryLoading ? '加载中...' : '查看历史轨迹' }}
             </button>
+            <div class="detail-links">
+              <span class="dlink" @click="router.push('/alerts')">🔔 相关告警</span>
+              <span class="dlink" @click="router.push('/temperature')">📈 温度趋势</span>
+            </div>
           </div>
         </div>
       </div>
@@ -155,10 +159,14 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { vehicleAPI } from '@/api'
+import { ElMessage } from 'element-plus'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import dayjs from 'dayjs'
+
+const router = useRouter()
 
 // ===== 数据状态 =====
 const mapContainer = ref<HTMLElement | null>(null)
@@ -242,6 +250,7 @@ async function refreshPositions() {
     updateMapMarkers()
   } catch (e) {
     console.error('获取车辆位置失败:', e)
+    ElMessage.warning('获取车辆位置失败，请检查网络')
   } finally {
     refreshing.value = false
   }
@@ -316,6 +325,7 @@ async function loadTrajectory(deviceId: string) {
     initTrajectoryMap()
   } catch (e) {
     console.error('加载轨迹失败:', e)
+    ElMessage.warning('加载轨迹失败')
   } finally {
     trajectoryLoading.value = false
   }
@@ -825,6 +835,10 @@ onUnmounted(() => {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.detail-links { display: flex; gap: 8px; margin-top: 6px; }
+.dlink { font-size: 11px; color: var(--accent); cursor: pointer; font-weight: 500; padding: 4px 8px; border-radius: 6px; background: var(--accent-bg); transition: all 0.2s; }
+.dlink:hover { background: var(--accent); color: #fff; }
 
 /* ===== 轨迹弹窗 ===== */
 .trajectory-overlay {

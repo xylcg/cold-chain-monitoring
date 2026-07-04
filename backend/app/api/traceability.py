@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from ..core.security import get_current_user
 from ..services.redis_service import redis_service
+from ..services.world_state import get_world_state
 from ..schemas import TEMP_THRESHOLD
 
 router = APIRouter(prefix="/api/v1/traceability", tags=["冷链追溯"])
@@ -202,31 +203,25 @@ _init_sample_traces()
 async def get_all_waybills(
     user: dict = Depends(get_current_user),
 ):
-    """获取所有运单列表"""
+    """获取所有运单列表 - 来自统一世界状态"""
+    ws = get_world_state()
     results = []
-    for waybill_id, record_ids in _trace_links.items():
-        records = [r for r in _trace_records if r["id"] in record_ids]
-        if not records:
-            continue
-        waybill_meta = _waybills.get(waybill_id, {})
+    for waybill_id, data in ws["waybills"].items():
+        records = data["records"]
+        temps = [r["temperature"] for r in records]
         results.append({
             "waybill_id": waybill_id,
-            "cargo_name": waybill_meta.get("cargo_name", "未知货物"),
-            "cargo_category": waybill_meta.get("cargo_category", "其他"),
-            "origin": waybill_meta.get("origin", ""),
-            "destination": waybill_meta.get("destination", ""),
-            "quantity": waybill_meta.get("quantity", 0),
-            "unit": waybill_meta.get("unit", "kg"),
-            "stages": len(records),
-            "first_record": records[0]["timestamp"],
-            "last_record": records[-1]["timestamp"],
-            "avg_temperature": round(sum(r["temperature"] for r in records) / len(records), 1),
-            "is_compliant": not any(
-                r["temperature"] > TEMP_THRESHOLD["WARN_UPPER"] or r["temperature"] < TEMP_THRESHOLD["LOW_LIMIT"]
-                for r in records
-            ),
+            "cargo_name": data["cargo_type"],
+            "cargo_category": "冷链",
+            "origin": data["origin"],
+            "destination": data["destination"],
+            "stages": 4,
+            "first_record": records[0]["timestamp"] if records else "",
+            "last_record": records[-1]["timestamp"] if records else "",
+            "avg_temperature": round(sum(temps) / len(temps), 1) if temps else 0,
+            "is_compliant": data["is_compliant"],
         })
-    return {"count": len(results), "waybills": results}
+    return {"count": len(results), "waybills": results, "data_source": "unified"}
 
 
 @router.post("/waybill")
@@ -548,6 +543,20 @@ async def get_traceability_stats(
     user: dict = Depends(get_current_user),
 ):
     """追溯链统计数据"""
+    # 优先使用统一世界状态
+    ws = get_world_state()
+    if ws["waybills"]:
+        total_waybills = len(ws["waybills"])
+        compliant = sum(1 for wb in ws["waybills"].values() if wb["is_compliant"])
+        return {
+            "total_waybills": total_waybills,
+            "total_records": sum(len(wb["records"]) for wb in ws["waybills"].values()),
+            "compliant_waybills": compliant,
+            "compliance_rate": round(compliant / max(total_waybills, 1) * 100, 1),
+            "violation_waybills": total_waybills - compliant,
+            "data_source": "unified",
+        }
+
     total_waybills = len(_trace_links)
     total_records = len(_trace_records)
 

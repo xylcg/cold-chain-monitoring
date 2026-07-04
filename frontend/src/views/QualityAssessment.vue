@@ -432,7 +432,9 @@ async function loadData() {
     products.value = pRes.products || []
     batches.value = bRes.batches || []
     stats.value = sRes
-  } catch {}
+  } catch {
+    ElMessage.warning('加载品质数据失败，请检查网络')
+  }
 }
 
 async function doAssess() {

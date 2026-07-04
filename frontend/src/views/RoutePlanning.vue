@@ -175,7 +175,13 @@ async function loadActiveRoutes() {
   try {
     const res: any = await routeAPI.getActive()
     activeRoutes.value = res.routes || []
-  } catch {}
+    if (activeRoutes.value.length > 0) {
+      await nextTick()
+      drawRouteOnMap(activeRoutes.value)
+    }
+  } catch {
+    ElMessage.warning('加载活跃路线失败，请检查网络')
+  }
 }
 
 async function loadRefData() {
@@ -183,7 +189,11 @@ async function loadRefData() {
     const [citiesRes, cargoRes] = await Promise.all([routeAPI.getCities(), routeAPI.getCargoTypes()])
     cities.value = citiesRes.cities || []
     cargoTypes.value = cargoRes.types || []
-  } catch {}
+  } catch {
+    // 使用默认数据作为回退
+    cities.value = ['北京', '上海', '广州', '成都', '武汉', '西安', '杭州', '深圳']
+    cargoTypes.value = ['冷冻肉类', '冷藏鲜奶', '水果', '蔬菜', '疫苗', '鲜花', '恒温药品']
+  }
 }
 
 onMounted(async () => {

@@ -9,7 +9,7 @@ from datetime import timedelta
 router = APIRouter(prefix="/api/v1/auth", tags=["认证"])
 
 
-# 模拟用户数据库
+# 模拟用户数据库 - 4 种角色
 MOCK_USERS = {
     "admin": {
         "password_hash": "$2b$12$LJ3m4ys3Lk0TSwHCpNqrFOsD5qhQZ0YHJzC6uPqjE0dSx4Oq5mP3O",
@@ -21,10 +21,15 @@ MOCK_USERS = {
         "role": "driver",
         "username": "driver01",
     },
-    "manager01": {
+    "warehouse01": {
         "password_hash": "$2b$12$LJ3m4ys3Lk0TSwHCpNqrFOsD5qhQZ0YHJzC6uPqjE0dSx4Oq5mP3O",
-        "role": "manager",
-        "username": "manager01",
+        "role": "warehouse",
+        "username": "warehouse01",
+    },
+    "customer01": {
+        "password_hash": "$2b$12$LJ3m4ys3Lk0TSwHCpNqrFOsD5qhQZ0YHJzC6uPqjE0dSx4Oq5mP3O",
+        "role": "customer",
+        "username": "customer01",
     },
 }
 

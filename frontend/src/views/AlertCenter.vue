@@ -39,6 +39,9 @@
           </span>
           <span class="adetail" @click="showDeviceDetail(device)">查看详情 →</span>
         </div>
+        <div class="card-actions" v-if="device.device_type === 'vehicle'">
+          <span class="alink" @click="router.push('/tracking')">🚛 追踪车辆</span>
+        </div>
       </div>
     </div>
 
@@ -84,12 +87,14 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { getTempClass, formatTime } from '@/utils'
 import { vehicleAPI } from '@/api'
 import { ElMessage } from 'element-plus'
 
 const store = useAppStore()
+const router = useRouter()
 const showDetail = ref(false)
 const selectedDevice = ref<any>(null)
 
@@ -159,6 +164,10 @@ async function showDeviceDetail(device: any) {
 .atime { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
 .atime-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--red); animation: pulse-ring 1.5s ease-in-out infinite; }
 .adetail { font-size: 11px; color: var(--accent); font-family: var(--font-mono); cursor: pointer; }
+
+.card-actions { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light); text-align: center; }
+.alink { font-size: 11px; color: var(--accent); cursor: pointer; font-weight: 600; transition: color 0.2s; }
+.alink:hover { color: #0284c7; }
 
 .sec-title { font-size: 15px; font-weight: 700; color: var(--text-title); margin-bottom: 14px; }
 
