@@ -648,10 +648,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { useAppStore } from '@/stores/app'
 import { qualityAPI, maintenanceAPI, uploadAPI, resourceAPI, customerAPI } from '@/api'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
+
+const store = useAppStore()
 
 const currentDate = computed(() => {
   const d = new Date()
@@ -996,11 +999,16 @@ async function confirmOrderReject() {
 }
 
 onMounted(() => {
+  store.startAutoRefresh(8000)
   loadQualityStats()
   refreshMaintenance()
   loadPendingReviews()
   loadReviewStats()
   refreshInventory()
+})
+
+onUnmounted(() => {
+  store.stopAutoRefresh()
 })
 </script>
 

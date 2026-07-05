@@ -36,7 +36,16 @@
           <div class="legend-item"><span class="legend-dot normal-dot"></span> 正常</div>
           <div class="legend-item"><span class="legend-dot alert-dot"></span> 告警</div>
           <div class="legend-item"><span class="legend-dot offline-dot"></span> 离线</div>
+          <div class="legend-item"><span class="legend-line warehouse-line"></span> 仓库</div>
+          <div class="legend-item"><span class="legend-line route-line"></span> 干线</div>
+          <div class="legend-item"><span class="legend-line forbidden-line"></span> 禁区</div>
         </div>
+
+        <!-- 围栏开关 -->
+        <button class="map-fence-toggle" @click="toggleFences" :class="{ active: showFences }">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M6.34 17.66l-2.83-2.83M19.07 4.93l-2.83-2.83"/></svg>
+          {{ showFences ? '隐藏围栏' : '显示围栏' }}
+        </button>
 
         <!-- 刷新按钮 -->
         <button class="map-refresh-btn" @click="refreshPositions" :class="{ spinning: refreshing }">
@@ -160,7 +169,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { vehicleAPI } from '@/api'
+import { vehicleAPI, geofenceAPI } from '@/api'
 import { ElMessage } from 'element-plus'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -174,7 +183,10 @@ const trajectoryContainer = ref<HTMLElement | null>(null)
 let map: L.Map | null = null
 let trajectoryMap: L.Map | null = null
 let markersLayer: L.LayerGroup | null = null
+let fencesLayer: L.LayerGroup | null = null
 const refreshTimer = ref<number | null>(null)
+const fences = ref<any[]>([])
+const showFences = ref(true)
 
 const vehicles = ref<any[]>([])
 const filteredVehicles = ref<any[]>([])
@@ -233,6 +245,7 @@ function initMap() {
   L.control.zoom({ position: 'bottomright' }).addTo(map)
 
   markersLayer = L.layerGroup().addTo(map)
+  fencesLayer = L.layerGroup().addTo(map)
 }
 
 // ===== 加载所有车辆位置 =====
@@ -254,6 +267,104 @@ async function refreshPositions() {
   } finally {
     refreshing.value = false
   }
+}
+
+// ===== 加载电子围栏 =====
+async function loadFences() {
+  try {
+    const res: any = await geofenceAPI.getGeoJSON()
+    fences.value = res.features || []
+    drawFences()
+  } catch (e) {
+    console.error('加载电子围栏失败:', e)
+  }
+}
+
+// ===== 绘制电子围栏 =====
+function drawFences() {
+  if (!fencesLayer || !showFences.value) return
+  fencesLayer.clearLayers()
+
+  fences.value.forEach((fence: any) => {
+    const props = fence.properties || {}
+    const geom = fence.geometry || {}
+    const coords = geom.coordinates || []
+
+    let layer: L.Layer | null = null
+
+    switch (geom.type) {
+      case 'Point':
+        const radius = props.radius || 200
+        layer = L.circle([coords[1], coords[0]], {
+          radius,
+          color: getFenceColor(props.category),
+          fillColor: getFenceColor(props.category),
+          fillOpacity: 0.15,
+          weight: 2,
+        }).bindTooltip(`<b>${props.name}</b><br/>${props.category_name || props.category}`, { permanent: false })
+        break
+
+      case 'LineString':
+        const buffer = props.buffer_meters || 100
+        const latlngs = coords.map((c: any) => [c[1], c[0]])
+        layer = L.polyline(latlngs, {
+          color: getFenceColor(props.category),
+          weight: 4,
+          opacity: 0.7,
+          dashArray: '10,5',
+        }).bindTooltip(`<b>${props.name}</b><br/>${props.category_name || props.category}`, { permanent: false })
+
+        L.polyline(latlngs, {
+          color: getFenceColor(props.category),
+          weight: buffer * 2,
+          opacity: 0.1,
+          lineCap: 'round',
+        }).addTo(fencesLayer)
+        break
+
+      case 'Polygon':
+        const polygonCoords = coords[0].map((c: any) => [c[1], c[0]])
+        layer = L.polygon(polygonCoords, {
+          color: getFenceColor(props.category),
+          fillColor: getFenceColor(props.category),
+          fillOpacity: 0.12,
+          weight: 2,
+        }).bindTooltip(`<b>${props.name}</b><br/>${props.category_name || props.category}`, { permanent: false })
+        break
+
+      case 'MultiPolygon':
+        coords.forEach((ring: any) => {
+          const ringCoords = ring[0].map((c: any) => [c[1], c[0]])
+          L.polygon(ringCoords, {
+            color: getFenceColor(props.category),
+            fillColor: getFenceColor(props.category),
+            fillOpacity: 0.12,
+            weight: 2,
+          }).bindTooltip(`<b>${props.name}</b><br/>${props.category_name || props.category}`, { permanent: false })
+            .addTo(fencesLayer)
+        })
+        break
+    }
+
+    if (layer) {
+      fencesLayer.addLayer(layer)
+    }
+  })
+}
+
+// ===== 获取围栏颜色 =====
+function getFenceColor(category: string) {
+  const colorMap: Record<string, string> = {
+    warehouse: '#00a8ff',
+    hub: '#10b981',
+    route_segment: '#f59e0b',
+    service_area: '#8b5cf6',
+    forbidden: '#ef4444',
+    high_temp: '#f97316',
+    city_zone: '#06b6d4',
+    store: '#ec4899',
+  }
+  return colorMap[category] || '#6b7280'
 }
 
 // ===== 更新地图标记 =====
@@ -404,10 +515,21 @@ function formatTime(t: string) {
   return t ? dayjs(t).format('MM-DD HH:mm') : '-'
 }
 
+// ===== 切换围栏显示 =====
+function toggleFences() {
+  showFences.value = !showFences.value
+  if (showFences.value) {
+    drawFences()
+  } else if (fencesLayer) {
+    fencesLayer.clearLayers()
+  }
+}
+
 // ===== 生命周期 =====
 onMounted(() => {
   initMap()
   refreshPositions()
+  loadFences()
   // 每15秒刷新
   refreshTimer.value = window.setInterval(refreshPositions, 15000)
 })
@@ -557,6 +679,15 @@ onUnmounted(() => {
 .alert-dot { background: var(--red); color: var(--red); }
 .offline-dot { background: #94a3b8; color: #94a3b8; }
 
+.legend-line {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+}
+.warehouse-line { background: #00a8ff; }
+.route-line { background: #f59e0b; }
+.forbidden-line { background: #ef4444; }
+
 /* 刷新按钮 */
 .map-refresh-btn {
   position: absolute;
@@ -582,6 +713,36 @@ onUnmounted(() => {
 }
 .spinning svg {
   animation: spin 1s linear infinite;
+}
+
+.map-fence-toggle {
+  position: absolute;
+  top: 56px;
+  right: 14px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.9);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0,0,0,0.06);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  transition: all 0.25s;
+  z-index: 500;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+}
+.map-fence-toggle:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.map-fence-toggle.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 
 @keyframes spin {

@@ -18,6 +18,19 @@ export const useAppStore = defineStore('app', () => {
     critical_alerts: 0,
     avg_temperature: 0,
     avg_humidity: 0,
+    // 扩展字段
+    warehouse_utilization: 0,
+    fleet_online_rate: 0,
+    total_waybills: 0,
+    quality_batches: 0,
+    total_online_devices: 0,
+    device_compliant_count: 0,
+    device_anomaly_count: 0,
+    alerts_by_severity: { critical: 0, severe: 0, normal: 0 },
+    zone_stats: { freeze: 0, refrigerated: 0, ambient: 0 },
+    warehouse_distribution: [] as any[],
+    timestamp: '',
+    data_source: '',
   })
 
   // 设备列表
@@ -33,24 +46,30 @@ export const useAppStore = defineStore('app', () => {
     try {
       const data: any = await dashboardAPI.getKPI()
       kpi.value = data
-    } catch {}
+    } catch (e: any) {
+      console.error('[Store] fetchKPI 失败:', e?.message || e)
+    }
   }
 
   async function fetchDevices() {
     try {
       const data: any = await dashboardAPI.getDevices()
       devices.value = data.devices || []
-    } catch {}
+    } catch (e: any) {
+      console.error('[Store] fetchDevices 失败:', e?.message || e)
+    }
   }
 
   async function fetchAlerts() {
     try {
       const data: any = await alertAPI.getActiveAlerts()
       activeAlerts.value = data.devices || []
-    } catch {}
+    } catch (e: any) {
+      console.error('[Store] fetchAlerts 失败:', e?.message || e)
+    }
   }
 
-  function startAutoRefresh(interval = 10000) {
+  function startAutoRefresh(interval = 5000) {
     stopAutoRefresh()
     fetchKPI()
     fetchDevices()
@@ -82,13 +101,13 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function logout() {
+    stopAutoRefresh()
     token.value = ''
     username.value = ''
     userRole.value = ''
     localStorage.removeItem('token')
     localStorage.removeItem('username')
     localStorage.removeItem('userRole')
-    localStorage.removeItem('user')
   }
 
   return {

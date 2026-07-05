@@ -275,6 +275,7 @@ class AlertRuleCreate(BaseModel):
     condition_value: float
     severity: AlertSeverity
     cooldown_seconds: int = 300
+    enabled: bool = True
 
 
 # ==================== 仪表盘 KPI ====================

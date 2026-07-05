@@ -373,7 +373,7 @@ function showOrderDetail(order: any) {
 
 // ===== 下单 =====
 const submitting = ref(false)
-const cargoCategories = ['冷链', '冷冻', '冷藏', '恒温', '生鲜', '乳制品', '肉类', '海鲜', '蔬菜', '水果', '药品']
+const cargoCategories = ['冷冻食品', '冷藏生鲜', '疫苗医药', '化工制剂', '其他']
 const zones = [
   { name: '冷冻区', label: '❄ 冷冻区 (-22℃~-15℃)' },
   { name: '冷藏区', label: '🧊 冷藏区 (0℃~4℃)' },
@@ -382,7 +382,7 @@ const zones = [
 
 const form = reactive({
   cargo_name: '',
-  cargo_category: '冷链',
+  cargo_category: '冷冻食品',
   origin: '',
   destination: '',
   quantity: 100,
@@ -439,12 +439,20 @@ async function confirmReceive(order: any) {
       cancelButtonText: '取消',
       type: 'success',
     })
-    await customerAPI.confirmReceive(order.order_id)
-    order.status = 'completed'
-    order.signed_by_customer = true
-    ElMessage.success(`订单 ${order.order_id} 已签收！`)
-  } catch {
+    const res: any = await customerAPI.confirmReceive(order.order_id)
+    // 仅在 API 成功返回后才更新本地状态
+    if (res.status === 'ok') {
+      order.status = 'completed'
+      order.signed_by_customer = true
+      ElMessage.success(`订单 ${order.order_id} 已签收！`)
+    } else {
+      ElMessage.error('签收失败，请重试')
+    }
+  } catch (err: any) {
     // 用户取消或接口失败
+    if (err !== 'cancel' && err?.response?.data?.detail) {
+      ElMessage.error(err.response.data.detail)
+    }
   }
 }
 
@@ -525,6 +533,7 @@ async function submitFeedback() {
 function handleLogout() {
   localStorage.removeItem('token')
   localStorage.removeItem('userRole')
+  localStorage.removeItem('username')
   window.location.hash = '#/login'
 }
 

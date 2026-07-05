@@ -34,7 +34,7 @@ const router = createRouter({
           path: 'dashboard',
           name: 'Dashboard',
           component: () => import('@/views/Dashboard.vue'),
-          meta: { title: '全局态势图', roles: ['admin'] },
+          meta: { title: '全局态势图', roles: ['admin', 'warehouse'] },
         },
         {
           path: 'boss',
@@ -46,7 +46,7 @@ const router = createRouter({
           path: 'warehouse',
           name: 'WarehouseDashboard',
           component: () => import('@/views/WarehouseDashboard.vue'),
-          meta: { title: '仓库管理工作台', roles: ['warehouse'] },
+          meta: { title: '仓库管理工作台', roles: ['admin', 'warehouse'] },
         },
         {
           path: 'monitor',
@@ -112,13 +112,13 @@ const router = createRouter({
           path: 'maintenance',
           name: 'MaintenancePredict',
           component: () => import('@/views/MaintenancePredict.vue'),
-          meta: { title: '故障预测', roles: ['warehouse'] },
+          meta: { title: '故障预测', roles: ['admin', 'warehouse'] },
         },
         {
           path: 'quality',
           name: 'QualityAssessment',
           component: () => import('@/views/QualityAssessment.vue'),
-          meta: { title: '品质评估', roles: ['warehouse'] },
+          meta: { title: '品质评估', roles: ['admin', 'warehouse'] },
         },
         {
           path: 'resources',
@@ -160,15 +160,21 @@ router.beforeEach((to, _from, next) => {
   // 访问根路径 → 根据角色跳转
   if (to.path === '/') return next(homePath)
 
-  // 角色权限检查
+  // 角色权限检查 - admin 拥有所有页面访问权限
   const allowedRoles = to.meta.roles as string[] | undefined
-  if (allowedRoles && allowedRoles.length > 0) {
-    if (userRole && !allowedRoles.includes(userRole)) {
+  if (allowedRoles && allowedRoles.length > 0 && userRole !== 'admin') {
+    // warehouse 可以访问含 warehouse 角色的页面 + 含 admin 角色的页面（上级覆盖）
+    if (userRole === 'warehouse') {
+      // warehouse 可访问标记了 warehouse 或 admin 的页面（仓储人员需要看全局态势图）
+      if (!allowedRoles.includes('warehouse') && !allowedRoles.includes('admin')) {
+        return next(homePath)
+      }
+    } else if (!allowedRoles.includes(userRole)) {
       return next(homePath)
     }
   }
 
-  // driver/customer 不允许访问 PC 端页面
+  // driver/customer 只允许访问自己的移动端页面
   if ((isDriver || isCustomer) && to.path !== '/login') {
     const mobilePaths = isDriver ? ['/driver-app'] : ['/customer-app']
     if (!mobilePaths.includes(to.path)) {

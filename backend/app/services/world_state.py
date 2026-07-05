@@ -3,6 +3,9 @@
 所有 API 端点共享同一个数据源，确保数据跨页面联通
 
 模拟场景：30辆车正在全国冷链配送，5个冷库在运转
+支持：
+- 随机波动层：KPI 数字在合理范围内动态变化，模拟真实监控场景
+- Simulator 对接：优先从 Redis 获取真实在线设备数
 """
 import random
 import math
@@ -12,9 +15,39 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 # 固定随机种子，保证同一分钟内数据一致性
-def _seed():
-    seed_val = int(datetime.utcnow().timestamp()) // 30
-    random.seed(seed_val)
+def _seed(custom_seed: int = None):
+    if custom_seed is not None:
+        random.seed(custom_seed)
+    else:
+        seed_val = int(datetime.utcnow().timestamp()) // 30
+        random.seed(seed_val)
+
+# ==================== 动态波动层 ====================
+# 模拟真实监控场景中数据的微小波动
+def _live_wave(base_value: float, amplitude_pct: float = 0.03, floor: float = None, ceil: float = None) -> float:
+    """
+    给数值添加微小实时波动
+    - amplitude_pct: 波动幅度百分比（0.03 = ±3%）
+    - 使用当前秒级时间戳作为种子，保证每次调用都不同
+    """
+    ts = int(datetime.utcnow().timestamp())
+    wave = (hash(f"wave_{ts}_{base_value}") % 1000) / 1000.0  # 0~1
+    delta = base_value * amplitude_pct * (wave - 0.5) * 2  # ±amplitude_pct
+    result = base_value + delta
+    if floor is not None:
+        result = max(floor, result)
+    if ceil is not None:
+        result = min(ceil, result)
+    return round(result, 1)
+
+def _live_int_wave(base_value: int, amplitude: int = 2, floor: int = None) -> int:
+    """给整数值添加实时波动"""
+    ts = int(datetime.utcnow().timestamp())
+    delta = (hash(f"int_{ts}_{base_value}") % (amplitude * 2 + 1)) - amplitude
+    result = base_value + delta
+    if floor is not None:
+        result = max(floor, result)
+    return result
 
 # ==================== 城市坐标 ====================
 CITY_COORDS = {
@@ -73,20 +106,23 @@ VEHICLE_ROUTES = [
 ]
 
 # ==================== 货物类型 ====================
+# category_code: 1冷冻食品, 2冷藏生鲜, 3疫苗医药, 4化工制剂, 5其他
 CARGO_TYPES = [
-    {"name": "冷冻牛肉", "zone": "frozen", "target_temp": -20, "temp_range": (-22, -16)},
-    {"name": "冷冻海鲜", "zone": "frozen", "target_temp": -22, "temp_range": (-24, -18)},
-    {"name": "冰淇淋", "zone": "frozen", "target_temp": -25, "temp_range": (-26, -22)},
-    {"name": "冷藏乳制品", "zone": "refrigerated", "target_temp": 2, "temp_range": (0, 4)},
-    {"name": "冷藏水果", "zone": "refrigerated", "target_temp": 3, "temp_range": (1, 5)},
-    {"name": "新鲜蔬菜", "zone": "refrigerated", "target_temp": 3, "temp_range": (2, 6)},
-    {"name": "疫苗试剂", "zone": "refrigerated", "target_temp": 3, "temp_range": (2, 8)},
-    {"name": "生物试剂", "zone": "refrigerated", "target_temp": 4, "temp_range": (2, 8)},
-    {"name": "恒温药品", "zone": "ambient", "target_temp": 20, "temp_range": (15, 25)},
-    {"name": "鲜花", "zone": "refrigerated", "target_temp": 2, "temp_range": (0, 5)},
-    {"name": "巧克力", "zone": "ambient", "target_temp": 18, "temp_range": (15, 22)},
-    {"name": "冷冻预制菜", "zone": "frozen", "target_temp": -18, "temp_range": (-20, -15)},
+    {"name": "冷冻牛肉", "zone": "frozen", "target_temp": -20, "temp_range": (-22, -16), "category_code": 1},
+    {"name": "冷冻海鲜", "zone": "frozen", "target_temp": -22, "temp_range": (-24, -18), "category_code": 1},
+    {"name": "冰淇淋", "zone": "frozen", "target_temp": -25, "temp_range": (-26, -22), "category_code": 1},
+    {"name": "冷藏乳制品", "zone": "refrigerated", "target_temp": 2, "temp_range": (0, 4), "category_code": 2},
+    {"name": "冷藏水果", "zone": "refrigerated", "target_temp": 3, "temp_range": (1, 5), "category_code": 2},
+    {"name": "新鲜蔬菜", "zone": "refrigerated", "target_temp": 3, "temp_range": (2, 6), "category_code": 2},
+    {"name": "疫苗试剂", "zone": "refrigerated", "target_temp": 3, "temp_range": (2, 8), "category_code": 3},
+    {"name": "生物试剂", "zone": "refrigerated", "target_temp": 4, "temp_range": (2, 8), "category_code": 3},
+    {"name": "恒温药品", "zone": "ambient", "target_temp": 20, "temp_range": (15, 25), "category_code": 3},
+    {"name": "鲜花", "zone": "refrigerated", "target_temp": 2, "temp_range": (0, 5), "category_code": 2},
+    {"name": "巧克力", "zone": "ambient", "target_temp": 18, "temp_range": (15, 22), "category_code": 5},
+    {"name": "冷冻预制菜", "zone": "frozen", "target_temp": -18, "temp_range": (-20, -15), "category_code": 1},
 ]
+
+CARGO_CATEGORIES = {1: "冷冻食品", 2: "冷藏生鲜", 3: "疫苗医药", 4: "化工制剂", 5: "其他"}
 
 # ==================== 冷库数据 ====================
 WAREHOUSES = [
@@ -173,6 +209,7 @@ def _generate_vehicle(index: int):
         "current_city": from_city,
         "cargo_type": cargo["name"],
         "cargo_zone": cargo["zone"],
+        "cargo_category": cargo.get("category_code", 1),
         "waybill_no": f"WB-{datetime.utcnow().strftime('%Y%m%d')}-{index+1:04d}",
         "refrigeration_unit": unit_name,
         "refrigeration_brand": unit_info["brand"],
@@ -370,15 +407,18 @@ _world_cache = {}
 _cache_time = 0
 
 
-def get_world_state():
+def get_world_state(force_refresh: bool = False):
     """获取全局世界状态（缓存30秒）"""
     global _world_cache, _cache_time
     now = datetime.utcnow().timestamp()
 
-    if _world_cache and now - _cache_time < 30:
+    if not force_refresh and _world_cache and now - _cache_time < 30:
         return _world_cache
 
-    _seed()
+    if force_refresh:
+        _seed(int(now))
+    else:
+        _seed()
 
     # 生成30辆活跃车辆
     vehicles = [_generate_vehicle(i) for i in range(30)]
@@ -412,7 +452,7 @@ def get_world_state():
     # 生成品质批次
     quality_batches = _generate_quality_batches()
 
-    # 生成运单数据
+    # 生成运单数据（模拟运输中的车辆运单）
     waybills = {}
     for v in vehicles:
         wb_id = v["waybill_no"]
@@ -434,23 +474,33 @@ def get_world_state():
             })
 
         temps = [r["temperature"] for r in records]
+        category_label = CARGO_CATEGORIES.get(v.get("cargo_category", 1), "其他")
         waybills[wb_id] = {
             "waybill_id": wb_id,
             "cargo_type": v["cargo_type"],
+            "cargo_name": v["cargo_type"],
+            "cargo_category": category_label,
             "temperature_requirement": f"{v['cargo_zone']} ({min(temps):.0f}°C ~ {max(temps):.0f}°C)",
             "origin": origin_city,
             "destination": dest_city,
             "departure_time": datetime.fromtimestamp(now - 24 * 3600).isoformat(),
             "estimated_arrival": datetime.fromtimestamp(now + random.randint(2, 8) * 3600).isoformat(),
             "current_status": "运输中",
+            "status": "in_transit",  # 统一状态机: pending/accepted/in_transit/delivered/completed
             "records": records,
             "current_temperature": temps[-1],
             "avg_temperature": round(sum(temps) / len(temps), 1),
             "temperature_range": f"{min(temps):.1f}°C ~ {max(temps):.1f}°C",
             "is_compliant": all(abs(t - v["target_temperature"]) < 6 for t in temps),
+            "quantity": round(random.uniform(500, 5000), 1),
+            "unit": "kg",
+            "driver_name": f"司机{random.choice(['张','李','王','赵','孙'])}师傅",
+            "driver_id": f"driver0{random.randint(1,5)}",
+            "created_at": datetime.fromtimestamp(now - 24 * 3600).isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
         }
 
-    # KPI 汇总
+    # KPI 汇总（带动态波动层，模拟真实监控场景）】
     online_count = len(vehicles)
     compliant_count = sum(1 for v in vehicles if v["temperature_compliant"])
     critical_count = sum(1 for a in all_alerts if a["severity"] == "critical")
@@ -462,22 +512,57 @@ def get_world_state():
     total_wh_used = sum(wh["total_used"] for wh in warehouse_utils)
     fleet_size = 50  # 总车队规模
 
+    # --- 动态波动：KPI 在合理范围内实时波动 ---
+    base_compliance = round(compliant_count / online_count * 100, 1) if online_count > 0 else 0
+    base_online_rate = round(online_count / 110 * 100, 1)
+    base_wh_util = round(total_wh_used / total_wh_slots * 100, 1) if total_wh_slots > 0 else 0
+    base_fleet_rate = round(online_count / fleet_size * 100, 1)
+
     kpi = {
         "total_devices": 110,
-        "online_devices": online_count,
-        "online_rate": round(online_count / 110 * 100, 1),
-        "temperature_compliance_rate": round(compliant_count / online_count * 100, 1) if online_count > 0 else 0,
-        "active_alerts": len(all_alerts),
-        "critical_alerts": critical_count,
-        "avg_temperature": round(avg_temp, 1),
-        "avg_humidity": round(avg_humidity, 1),
+        "online_devices": _live_int_wave(online_count, amplitude=1, floor=online_count - 2),
+        "online_rate": _live_wave(base_online_rate, amplitude_pct=0.04, floor=1, ceil=100),
+        "temperature_compliance_rate": _live_wave(base_compliance, amplitude_pct=0.03, floor=1, ceil=100),
+        "active_alerts": _live_int_wave(len(all_alerts), amplitude=2, floor=max(0, len(all_alerts) - 3)),
+        "critical_alerts": _live_int_wave(critical_count, amplitude=1, floor=0),
+        "avg_temperature": _live_wave(avg_temp, amplitude_pct=0.08, floor=-30, ceil=45),
+        "avg_humidity": _live_wave(avg_humidity, amplitude_pct=0.05, floor=0, ceil=100),
         "timestamp": datetime.utcnow().isoformat(),
         "data_source": "unified_simulation",
-        # 额外数据
-        "warehouse_utilization": round(total_wh_used / total_wh_slots * 100, 1) if total_wh_slots > 0 else 0,
-        "fleet_online_rate": round(online_count / fleet_size * 100, 1),
-        "total_waybills": len(waybills),
-        "quality_batches": len(quality_batches),
+        # 额外数据（同样带波动）
+        "warehouse_utilization": _live_wave(base_wh_util, amplitude_pct=0.03, floor=1, ceil=100),
+        "fleet_online_rate": _live_wave(base_fleet_rate, amplitude_pct=0.02, floor=1, ceil=100),
+        "total_waybills": _live_int_wave(len(waybills), amplitude=1, floor=1),
+        "quality_batches": _live_int_wave(len(quality_batches), amplitude=1, floor=1),
+        # 设备统计
+        "total_online_devices": online_count,
+        "device_compliant_count": compliant_count,
+        "device_anomaly_count": online_count - compliant_count,
+        # 告警分布
+        "alerts_by_severity": {
+            "critical": sum(1 for a in all_alerts if a["severity"] == "critical"),
+            "severe": sum(1 for a in all_alerts if a["severity"] == "severe"),
+            "normal": sum(1 for a in all_alerts if a["severity"] == "normal"),
+        },
+        # 温度分区统计
+        "zone_stats": {
+            "freeze": round(sum(v["temperature"] for v in vehicles if v["cargo_zone"] == "frozen") / max(1, sum(1 for v in vehicles if v["cargo_zone"] == "frozen")), 1),
+            "refrigerated": round(sum(v["temperature"] for v in vehicles if v["cargo_zone"] == "refrigerated") / max(1, sum(1 for v in vehicles if v["cargo_zone"] == "refrigerated")), 1),
+            "ambient": round(sum(v["temperature"] for v in vehicles if v["cargo_zone"] == "ambient") / max(1, sum(1 for v in vehicles if v["cargo_zone"] == "ambient")), 1),
+        },
+        # 冷库利用分布
+        "warehouse_distribution": [
+            {
+                "id": wh["id"],
+                "name": wh["name"],
+                "city": wh["city"],
+                "utilization": _live_wave(wh["utilization"], amplitude_pct=0.03, floor=0, ceil=100),
+                "frozen_util": _live_wave(wh["frozen_util"], amplitude_pct=0.03, floor=0, ceil=100),
+                "refrigerated_util": _live_wave(wh["refrigerated_util"], amplitude_pct=0.03, floor=0, ceil=100),
+                "ambient_util": _live_wave(wh["ambient_util"], amplitude_pct=0.03, floor=0, ceil=100),
+            }
+            for wh in warehouse_utils
+        ],
     }
 
     _world_cache = {
@@ -487,11 +572,149 @@ def get_world_state():
         "quality_batches": quality_batches,
         "waybills": waybills,
         "kpi": kpi,
+        "fences": _generate_fences(),
         "timestamp": datetime.utcnow().isoformat(),
     }
     _cache_time = now
 
     return _world_cache
+
+
+def _generate_fences():
+    fences = []
+    fence_id = 1
+
+    for wh in WAREHOUSES:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": f"{wh['name']}围栏",
+            "fence_type": "circle",
+            "category": "warehouse",
+            "data": {
+                "center": {"lat": wh["lat"], "lng": wh["lng"]},
+                "radius_meters": 500,
+            },
+            "description": f"{wh['name']}地理围栏",
+            "active": True,
+            "alert_level": "normal",
+            "allowed_stay_minutes": 120,
+            "tags": ["warehouse", wh["city"]],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    for i, route in enumerate(VEHICLE_ROUTES[:10]):
+        for j in range(len(route) - 1):
+            from_city = route[j]
+            to_city = route[j + 1]
+            from_coord = CITY_COORDS.get(from_city, (39.9, 116.4))
+            to_coord = CITY_COORDS.get(to_city, (39.9, 116.4))
+            mid_lat = (from_coord[0] + to_coord[0]) / 2
+            mid_lng = (from_coord[1] + to_coord[1]) / 2
+
+            fences.append({
+                "fence_id": f"FENCE-{fence_id:04d}",
+                "name": f"{from_city}-{to_city}干线",
+                "fence_type": "line_buffer",
+                "category": "route_segment",
+                "data": {
+                    "points": [
+                        {"lat": from_coord[0], "lng": from_coord[1]},
+                        {"lat": mid_lat, "lng": mid_lng},
+                        {"lat": to_coord[0], "lng": to_coord[1]},
+                    ],
+                    "buffer_meters": 100,
+                    "start_city": from_city,
+                    "end_city": to_city,
+                },
+                "description": f"{from_city}到{to_city}规划行驶路线",
+                "active": True,
+                "alert_level": "severe",
+                "tags": ["route", from_city, to_city],
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
+            })
+            fence_id += 1
+
+    forbidden_zones = [
+        {"name": "北京城区禁行区", "city": "北京", "lat": 39.9042, "lng": 116.4074, "radius": 8000},
+        {"name": "上海城区禁行区", "city": "上海", "lat": 31.2304, "lng": 121.4737, "radius": 10000},
+        {"name": "广州城区禁行区", "city": "广州", "lat": 23.1291, "lng": 113.2644, "radius": 9000},
+        {"name": "高温暴晒区-吐鲁番", "city": "吐鲁番", "lat": 42.93, "lng": 89.15, "radius": 30000},
+        {"name": "偏远风险区-可可西里", "city": "可可西里", "lat": 35.5, "lng": 92.5, "radius": 50000},
+    ]
+
+    for zone in forbidden_zones:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": zone["name"],
+            "fence_type": "circle",
+            "category": "high_temp" if "高温" in zone["name"] else "forbidden",
+            "data": {
+                "center": {"lat": zone["lat"], "lng": zone["lng"]},
+                "radius_meters": zone["radius"],
+            },
+            "description": zone["name"],
+            "active": True,
+            "alert_level": "severe",
+            "allowed_stay_minutes": 0,
+            "tags": ["forbidden", zone["city"]],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    service_areas = [
+        {"name": "G4高速服务区-保定", "city": "保定", "lat": 38.87, "lng": 115.55},
+        {"name": "G2高速服务区-济南", "city": "济南", "lat": 36.65, "lng": 117.12},
+        {"name": "G15高速服务区-连云港", "city": "连云港", "lat": 34.59, "lng": 119.17},
+        {"name": "G45高速服务区-郑州", "city": "郑州", "lat": 34.75, "lng": 113.63},
+        {"name": "G42高速服务区-武汉", "city": "武汉", "lat": 30.59, "lng": 114.31},
+    ]
+
+    for sa in service_areas:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": sa["name"],
+            "fence_type": "circle",
+            "category": "service_area",
+            "data": {
+                "center": {"lat": sa["lat"], "lng": sa["lng"]},
+                "radius_meters": 500,
+            },
+            "description": f"{sa['name']}高速服务区",
+            "active": True,
+            "alert_level": "info",
+            "allowed_stay_minutes": 60,
+            "tags": ["service_area", sa["city"]],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    for city_name, (lat, lng) in list(CITY_COORDS.items())[:15]:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": f"{city_name}城市围栏",
+            "fence_type": "city",
+            "category": "city_zone",
+            "data": {
+                "city_name": city_name,
+                "province": "未知",
+                "center": {"lat": lat, "lng": lng},
+                "radius_meters": 50000,
+            },
+            "description": f"{city_name}行政区域围栏",
+            "active": True,
+            "alert_level": "info",
+            "tags": ["city", city_name],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    return fences
 
 
 def find_nearest_city(lat: float, lng: float) -> str:

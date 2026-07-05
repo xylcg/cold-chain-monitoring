@@ -61,6 +61,16 @@
                 <span class="mci-done">✅ 已完成</span>
                 <button class="mcia-btn" @click.stop="deleteDriverOrder(o)">🗑 删除</button>
               </div>
+              <!-- 客户反馈评分 -->
+              <div class="mci-feedback" v-if="o.status==='completed' && feedbackMap[o.order_id]">
+                <div class="mcif-header">⭐ 客户评价</div>
+                <div class="mcif-stars">
+                  <span class="mcif-item">货物完好 {{ '⭐'.repeat(feedbackMap[o.order_id].cargo_condition) }}</span>
+                  <span class="mcif-item">温度满意 {{ '⭐'.repeat(feedbackMap[o.order_id].temp_satisfaction) }}</span>
+                  <span class="mcif-item">整体 {{ '⭐'.repeat(feedbackMap[o.order_id].overall_rating) }}</span>
+                </div>
+                <div class="mcif-comment" v-if="feedbackMap[o.order_id].comment">💬 {{ feedbackMap[o.order_id].comment }}</div>
+              </div>
             </div>
           </div>
           <div class="mb-empty" v-else><div class="mbe-icon">📦</div><p>暂无接单任务</p><span>切换到「可接订单」接取新任务</span></div>
@@ -110,9 +120,25 @@
             <div class="mbd-row"><span>客户</span><strong>{{ detailOrder.customer_name }}</strong></div>
             <div class="mbd-row"><span>运费</span><strong class="text-red">¥{{ detailOrder.price?.toLocaleString() }}</strong></div>
             <div class="mbd-row"><span>时间</span><strong>{{ fmtTime(detailOrder.created_at) }}</strong></div>
-            <!-- 拍照记录 -->
-            <div class="mbd-row" v-if="detailOrder.accept_photo_url"><span>出发拍照</span><img :src="detailOrder.accept_photo_url" class="mbd-photo" /></div>
-            <div class="mbd-row" v-if="detailOrder.deliver_photo_url"><span>送达拍照</span><img :src="detailOrder.deliver_photo_url" class="mbd-photo" /></div>
+            <!-- 拍照记录及审核状态 -->
+            <div class="mbd-row" v-if="detailOrder.accept_photo_url">
+              <span>出发拍照</span>
+              <div class="mbd-photo-wrap">
+                <img :src="detailOrder.accept_photo_url" class="mbd-photo" />
+                <span class="mbd-review-tag" :class="detailOrder.accept_review_status||'pending'">
+                  {{ reviewLabel(detailOrder.accept_review_status) }}
+                </span>
+              </div>
+            </div>
+            <div class="mbd-row" v-if="detailOrder.deliver_photo_url">
+              <span>送达拍照</span>
+              <div class="mbd-photo-wrap">
+                <img :src="detailOrder.deliver_photo_url" class="mbd-photo" />
+                <span class="mbd-review-tag" :class="detailOrder.deliver_review_status||'pending'">
+                  {{ reviewLabel(detailOrder.deliver_review_status) }}
+                </span>
+              </div>
+            </div>
             <!-- 进度 -->
             <div class="mbd-progress">
               <div class="mbdp-step" :class="{done:detailOrder.status!=='pending'}"><span class="mbdp-dot">1</span>接单</div>
@@ -228,6 +254,9 @@ const trackingData = ref<Record<string, any>>({})
 const trackingOrder = ref<any>(null)
 const trackingDetail = ref<any>(null)
 
+// ===== 客户反馈 =====
+const feedbackMap = ref<Record<string, any>>({})
+
 const statusMap: Record<string, string> = {
   pending: '待接单', accepted: '已接单',
   in_transit: '配送中', delivered: '已送达', completed: '已完成',
@@ -244,7 +273,7 @@ function fmtTime(t: string) { return t ? dayjs(t).format('MM-DD HH:mm') : '—' 
 async function loadDriverOrders() {
   try {
     const res: any = await customerAPI.getDriverOrders()
-    const deleted = loadDeleted()
+    const deleted = loadDriverDeleted()
     driverOrders.value = (res.orders || []).filter((o: any) => !deleted.includes(o.order_id))
     loadTrackingSummary()
   } catch {}
@@ -252,7 +281,7 @@ async function loadDriverOrders() {
 async function loadAvailableOrders() {
   try {
     const res: any = await customerAPI.getAvailableOrders()
-    const deleted = loadDeleted()
+    const deleted = loadDriverDeleted()
     availableOrders.value = (res.orders || []).filter((o: any) => !deleted.includes(o.order_id))
   } catch {}
 }
@@ -296,34 +325,50 @@ async function uploadPhoto(): Promise<string> {
   fd.append('notes', photoMode.value === 'accept' ? '出发拍照' : '送达拍照')
   try {
     const res: any = await uploadAPI.uploadTempRecord(fd)
-    return res.data?.url || ''
-  } catch {
-    return photoPreview.value  // 降级：返回本地预览URL
+    const url = res.data?.url || ''
+    if (!url) {
+      ElMessage.warning('照片上传成功但未返回URL，请稍后查看审核状态')
+    }
+    return url
+  } catch (err: any) {
+    const detail = err?.response?.data?.message || '上传失败，请检查网络后重试'
+    ElMessage.error(detail)
+    throw err  // 不降级，让调用方处理
   }
 }
 
 async function submitPhotoAndAction() {
-  if (!photoFile) return
+  if (!photoFile) {
+    ElMessage.warning('请先选择照片')
+    return
+  }
   uploading.value = true
+  const currentMode = photoMode.value
+  const currentOrder = photoOrder.value
   try {
     const photoUrl = await uploadPhoto()
-    if (photoMode.value === 'accept') {
+    if (!photoUrl) {
+      ElMessage.warning('照片上传失败，无法继续操作')
+      return
+    }
+    if (currentMode === 'accept') {
       // 拍照接单
-      await customerAPI.acceptOrderWithPhoto(photoOrder.value.order_id, photoUrl)
-      ElMessage.success(`已接单并上传出发照片: ${photoOrder.value.order_id}`)
-    } else if (photoMode.value === 'deliver') {
+      await customerAPI.acceptOrderWithPhoto(currentOrder.order_id, photoUrl)
+      ElMessage.success(`已接单并上传出发照片: ${currentOrder.order_id}`)
+    } else if (currentMode === 'deliver') {
       // 拍照送达
-      await customerAPI.updateOrderStatus(photoOrder.value.order_id, 'delivered', photoUrl)
-      ElMessage.success(`已标记送达并上传照片: ${photoOrder.value.order_id}`)
+      await customerAPI.updateOrderStatus(currentOrder.order_id, 'delivered', photoUrl)
+      ElMessage.success(`已标记送达并上传照片: ${currentOrder.order_id}`)
     }
     cancelPhoto()
     await loadDriverOrders()
-    if (photoMode.value === 'accept') {
+    if (currentMode === 'accept') {
       await loadAvailableOrders()
       orderSubTab.value = 'my'
     }
-  } catch {
-    ElMessage.error('操作失败')
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail || '操作失败，请重试'
+    ElMessage.error(detail)
   } finally {
     uploading.value = false
   }
@@ -347,15 +392,21 @@ async function startTransit(o: any) {
   } catch {}
 }
 
-// ===== 删除（黑名单+后端删除） =====
-const DEL_KEY = 'driver_deleted_ids'
-function loadDeleted(): string[] { try { const s = localStorage.getItem(DEL_KEY); return s ? JSON.parse(s) : [] } catch { return [] } }
-function saveDeleted(id: string) { const ids = loadDeleted(); if (!ids.includes(id)) ids.push(id); localStorage.setItem(DEL_KEY, JSON.stringify(ids)) }
+// ===== 删除订单（本地黑名单，不影响客户端） =====
+const DRIVER_DEL_KEY = 'driver_deleted_ids'
+function loadDriverDeleted(): string[] {
+  try { const s = localStorage.getItem(DRIVER_DEL_KEY); return s ? JSON.parse(s) : [] } catch { return [] }
+}
+function saveDriverDeleted(id: string) {
+  const ids = loadDriverDeleted()
+  if (!ids.includes(id)) ids.push(id)
+  localStorage.setItem(DRIVER_DEL_KEY, JSON.stringify(ids))
+}
 async function deleteDriverOrder(o: any) {
   try {
     await ElMessageBox.confirm(`删除订单 ${o.order_id}？`, '删除确认', { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' })
     await customerAPI.deleteOrder(o.order_id)
-    saveDeleted(o.order_id)
+    saveDriverDeleted(o.order_id)
     driverOrders.value = driverOrders.value.filter(x => x.order_id !== o.order_id)
     ElMessage.success('已删除')
   } catch {}
@@ -388,9 +439,49 @@ async function loadTrackingDetail(o: any) {
   } catch { /* ignore */ }
 }
 
-function handleLogout() { localStorage.removeItem('token'); localStorage.removeItem('userRole'); window.location.hash = '#/login' }
+// ===== 照片审核状态标签 =====
+function reviewLabel(status: string): string {
+  const map: Record<string, string> = { pending_review: '待审核', approved: '✅ 已通过', rejected: '❌ 已驳回' }
+  return map[status] || '待审核'
+}
 
-onMounted(() => { loadDriverOrders() })
+// ===== 加载照片审核状态 =====
+async function loadPhotoReviewStatus() {
+  try {
+    const res: any = await uploadAPI.getDriverPhotos()
+    if (res?.data?.records) {
+      const records = res.data.records
+      for (const o of driverOrders.value) {
+        const acceptRecord = records.find((r: any) => r.order_id === o.order_id && r.photo_type === 'accept')
+        const deliverRecord = records.find((r: any) => r.order_id === o.order_id && r.photo_type === 'deliver')
+        if (acceptRecord) o.accept_review_status = acceptRecord.review_status
+        if (deliverRecord) o.deliver_review_status = deliverRecord.review_status
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+// ===== 加载客户反馈评分 =====
+async function loadFeedbackForCompleted() {
+  const completedOrders = driverOrders.value.filter(o => o.status === 'completed')
+  for (const o of completedOrders) {
+    try {
+      const res: any = await customerAPI.getQualityFeedback(o.order_id)
+      if (res.has_feedback && res.feedback) {
+        feedbackMap.value[o.order_id] = res.feedback
+      }
+    } catch { /* ignore */ }
+  }
+}
+
+function handleLogout() {
+  localStorage.removeItem('token')
+  localStorage.removeItem('userRole')
+  localStorage.removeItem('username')
+  window.location.hash = '#/login'
+}
+
+onMounted(async () => { await loadDriverOrders(); loadPhotoReviewStatus(); loadFeedbackForCompleted() })
 </script>
 
 <style scoped>
@@ -490,6 +581,11 @@ onMounted(() => { loadDriverOrders() })
 .mbd-row strong{font-weight:600}
 .text-red{color:#ef4444}
 .mbd-photo{width:80px;height:80px;border-radius:8px;object-fit:cover}
+.mbd-photo-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+.mbd-review-tag{font-size:10px;padding:1px 6px;border-radius:4px;font-weight:600}
+.mbd-review-tag.pending_review,.mbd-review-tag.pending{background:#fef3c7;color:#d97706}
+.mbd-review-tag.approved{background:#d1fae5;color:#059669}
+.mbd-review-tag.rejected{background:#fee2e2;color:#dc2626}
 
 /* Progress */
 .mbd-progress{display:flex;align-items:center;gap:0;margin:12px 0;padding:8px 0}
@@ -558,6 +654,13 @@ onMounted(() => { loadDriverOrders() })
 .mt-icon{font-size:20px}
 .mt-label{font-size:10px;color:#999}
 .mt-item.active .mt-label{color:#00a8ff;font-weight:600}
+
+/* 客户反馈评分卡片 */
+.mci-feedback{margin-top:8px;padding:10px 12px;border-radius:10px;background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1px solid #fde68a}
+.mcif-header{font-size:12px;font-weight:700;color:#d97706;margin-bottom:6px}
+.mcif-stars{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}
+.mcif-item{font-size:11px;color:#92400e;font-weight:500}
+.mcif-comment{margin-top:4px;font-size:11px;color:#b45309;font-style:italic;line-height:1.4}
 
 @media (min-width:768px){.mobile-wrap{border-radius:16px;margin:20px;min-height:auto;box-shadow:0 4px 30px rgba(0,0,0,.08)}}
 </style>

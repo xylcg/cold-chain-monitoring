@@ -3,8 +3,8 @@
     <!-- 页面头部 -->
     <div class="page-header">
       <div class="header-left">
-        <h2 class="page-title">老板工作台</h2>
-        <span class="page-subtitle">冷链运营全局态势 · KPI决策看板 · 运单查询</span>
+        <h2 class="page-title">运营总览</h2>
+        <span class="page-subtitle">冷链运营全局数据 · KPI决策看板 · 运单查询</span>
       </div>
       <div class="header-right">
         <div class="live-indicator">
@@ -315,7 +315,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { alertAPI, dispatchAPI, resourceAPI, traceabilityAPI, customerAPI } from '@/api'
@@ -455,12 +455,17 @@ async function activateEmergency() {
 }
 
 onMounted(() => {
+  store.startAutoRefresh(8000)
   loadAlertStats()
   loadTodayStats()
   loadTraceStats()
   loadFinanceData()
   loadDriverData()
   loadCustomerData()
+})
+
+onUnmounted(() => {
+  store.stopAutoRefresh()
 })
 </script>
 

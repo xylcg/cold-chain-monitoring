@@ -126,6 +126,7 @@ async def create_alert_rule(rule: AlertRuleCreate, user: dict = Depends(get_curr
         "field": rule.condition_field, "op": rule.condition_operator,
         "value": rule.condition_value, "severity": rule.severity.value,
         "type": rule.rule_type, "msg": f"{rule.rule_name}触发",
+        "enabled": rule.enabled,
     }
     alert_engine.add_rule(rule_dict)
     return {"status": "ok", "rule": rule_dict}

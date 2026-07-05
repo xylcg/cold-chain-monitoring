@@ -164,7 +164,7 @@ const creating = ref(false)
 const newWaybill = ref({
   waybill_id: '',
   cargo_name: '',
-  cargo_category: '水果',
+  cargo_category: '冷冻食品',
   origin: '',
   destination: '',
   quantity: 0,
@@ -208,7 +208,7 @@ async function createWaybill() {
     ElMessage.success('运单创建成功')
     showCreateDialog.value = false
     newWaybill.value = {
-      waybill_id: '', cargo_name: '', cargo_category: '水果',
+      waybill_id: '', cargo_name: '', cargo_category: '冷冻食品',
       origin: '', destination: '', quantity: 0, unit: 'kg',
       shipper: '', receiver: '', notes: '',
     }

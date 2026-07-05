@@ -45,6 +45,20 @@
       </div>
     </div>
 
+    <div v-if="fenceAlerts.length > 0" class="glass-card">
+      <h3 class="sec-title">电子围栏告警</h3>
+      <div class="fence-alert-list">
+        <div v-for="alert in fenceAlerts" :key="alert.event_id" class="fence-alert-item">
+          <span class="fence-alert-level" :class="getAlertLevelClass(alert.alert_level)">
+            {{ getAlertLevelText(alert.alert_level) }}
+          </span>
+          <span class="fence-alert-desc">{{ alert.description }}</span>
+          <span class="fence-alert-meta">{{ alert.fence_name }} · {{ alert.city_section || alert.plate_number }}</span>
+          <span class="fence-alert-time">{{ formatTime(alert.event_time) }}</span>
+        </div>
+      </div>
+    </div>
+
     <div class="glass-card">
       <h3 class="sec-title">告警级别说明</h3>
       <div class="sev-list">
@@ -86,17 +100,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { getTempClass, formatTime } from '@/utils'
-import { vehicleAPI } from '@/api'
+import { vehicleAPI, geofenceAPI } from '@/api'
 import { ElMessage } from 'element-plus'
 
 const store = useAppStore()
 const router = useRouter()
 const showDetail = ref(false)
 const selectedDevice = ref<any>(null)
+const fenceAlerts = ref<any[]>([])
+const loadingFenceAlerts = ref(false)
 
 async function showDeviceDetail(device: any) {
   try {
@@ -111,6 +127,42 @@ async function showDeviceDetail(device: any) {
     ElMessage.error('获取设备详情失败')
   }
 }
+
+async function loadFenceAlerts() {
+  loadingFenceAlerts.value = true
+  try {
+    const res: any = await geofenceAPI.getAlerts()
+    fenceAlerts.value = res.alerts || []
+  } catch {
+    console.error('加载围栏告警失败')
+  } finally {
+    loadingFenceAlerts.value = false
+  }
+}
+
+function getAlertLevelClass(level: string) {
+  const map: Record<string, string> = {
+    severe: 'crit',
+    warning: 'red',
+    normal: 'amber',
+    info: 'normal',
+  }
+  return map[level] || 'normal'
+}
+
+function getAlertLevelText(level: string) {
+  const map: Record<string, string> = {
+    severe: '严重',
+    warning: '警告',
+    normal: '一般',
+    info: '正常',
+  }
+  return map[level] || level
+}
+
+onMounted(() => {
+  loadFenceAlerts()
+})
 </script>
 
 <style scoped>
@@ -195,4 +247,51 @@ async function showDeviceDetail(device: any) {
 .mono { font-family: var(--font-mono); color: var(--text-secondary); }
 
 @media (max-width: 768px) { .detail-grid { grid-template-columns: 1fr; } }
+
+.fence-alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fence-alert-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-input);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+
+.fence-alert-level {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+.fence-alert-level.crit { color: #fff; background: var(--red); }
+.fence-alert-level.red { color: var(--red); background: var(--red-bg); }
+.fence-alert-level.amber { color: var(--amber); background: var(--amber-bg); }
+.fence-alert-level.normal { color: var(--teal); background: var(--teal-bg); }
+
+.fence-alert-desc {
+  flex: 1;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.fence-alert-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.fence-alert-time {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
 </style>

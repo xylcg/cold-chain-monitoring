@@ -10,14 +10,14 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from ..services.world_state import get_world_state
-from ..core.security import get_current_user
+from ..core.security import get_current_user, require_role
 
 router = APIRouter(prefix="/api/v1/customer", tags=["客户服务"])
 
 # ========== 顾客订单模型 ==========
 class CustomerOrderCreate(BaseModel):
     cargo_name: str
-    cargo_category: str = "冷链"
+    cargo_category: str = "冷冻食品"
     origin: str
     destination: str
     quantity: float = 0.0
@@ -35,7 +35,10 @@ _customer_orders: dict = {}  # order_id -> 订单数据
 
 
 @router.get("/query/{waybill_id}")
-async def query_waybill_temperature(waybill_id: str):
+async def query_waybill_temperature(
+    waybill_id: str,
+    user: dict = Depends(require_role("admin", "warehouse", "customer")),
+):
     """客户查询运单温度 - 来自统一世界状态"""
     ws = get_world_state()
     data = ws["waybills"].get(waybill_id)
@@ -84,6 +87,7 @@ async def get_temperature_curve(
     waybill_id: str,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    user: dict = Depends(require_role("admin", "warehouse", "customer")),
 ):
     """获取运单温度曲线数据"""
     ws = get_world_state()
@@ -114,7 +118,11 @@ async def get_temperature_curve(
 
 
 @router.get("/certificate/{waybill_id}")
-async def download_temperature_certificate(waybill_id: str, format: str = "text"):
+async def download_temperature_certificate(
+    waybill_id: str,
+    format: str = "text",
+    user: dict = Depends(require_role("admin", "warehouse", "customer")),
+):
     """生成温度证明文件"""
     ws = get_world_state()
     data = ws["waybills"].get(waybill_id)
@@ -186,9 +194,12 @@ async def get_my_orders(user: dict = Depends(get_current_user)):
 
 
 @router.get("/scan")
-async def scan_qr_query(code: str = Query(...)):
+async def scan_qr_query(
+    code: str = Query(...),
+    user: dict = Depends(require_role("admin", "warehouse", "customer")),
+):
     """扫码查询"""
-    return await query_waybill_temperature(code)
+    return await query_waybill_temperature(code, user=user)
 
 
 # ==================== 顾客下单 ====================
@@ -196,9 +207,9 @@ async def scan_qr_query(code: str = Query(...)):
 @router.post("/create-order")
 async def create_order(
     data: CustomerOrderCreate,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("customer", "admin", "warehouse")),
 ):
-    """顾客创建新订单"""
+    """顾客/管理员/仓库创建新订单"""
     order_id = f"ORD-{datetime.utcnow().strftime('%Y%m%d')}-{str(uuid.uuid4())[:4].upper()}"
     now = datetime.utcnow().isoformat()
     order = {
@@ -262,9 +273,9 @@ async def get_available_orders(user: dict = Depends(get_current_user)):
 @router.post("/accept-order/{order_id}")
 async def accept_order(
     order_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("driver", "admin", "warehouse")),
 ):
-    """司机接单"""
+    """司机/管理员接单"""
     if order_id not in _customer_orders:
         raise HTTPException(status_code=404, detail="订单不存在")
     order = _customer_orders[order_id]
@@ -281,7 +292,7 @@ async def accept_order(
 async def accept_order_with_photo(
     order_id: str,
     photo_url: str = Query(""),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("driver", "admin", "warehouse")),
 ):
     """司机接单并上传出发拍照"""
     if order_id not in _customer_orders:
@@ -321,16 +332,18 @@ async def update_order_status(
     order_id: str,
     status: str = Query(..., description="in_transit(开始配送)/delivered(已送达)"),
     photo_url: str = Query(""),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("driver", "admin", "warehouse")),
 ):
-    """司机更新订单配送状态"""
+    """司机/管理员更新订单配送状态"""
     if order_id not in _customer_orders:
         raise HTTPException(status_code=404, detail="订单不存在")
     order = _customer_orders[order_id]
     user_id = user.get("sub", "")
+    user_role = user.get("role", "")
     is_driver = order.get("driver_id") == user_id
-    if not is_driver:
-        raise HTTPException(status_code=403, detail="仅接单司机可操作此订单")
+    is_admin = user_role in ("admin", "warehouse")
+    if not is_driver and not is_admin:
+        raise HTTPException(status_code=403, detail="仅接单司机或管理员可操作此订单")
     valid_statuses = ["in_transit", "delivered"]
     if status not in valid_statuses:
         raise HTTPException(status_code=400, detail="无效的状态，仅支持 in_transit/delivered")
@@ -351,16 +364,18 @@ async def update_order_status(
 @router.post("/confirm-receive/{order_id}")
 async def confirm_receive(
     order_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("customer", "admin", "warehouse")),
 ):
-    """客户确认签收，订单状态变为 completed"""
+    """客户/管理员确认签收，订单状态变为 completed"""
     if order_id not in _customer_orders:
         raise HTTPException(status_code=404, detail="订单不存在")
     order = _customer_orders[order_id]
     user_id = user.get("sub", "")
+    user_role = user.get("role", "")
     is_customer = order.get("customer_id") == user_id
-    if not is_customer:
-        raise HTTPException(status_code=403, detail="仅下单客户可签收确认")
+    is_admin = user_role in ("admin", "warehouse")
+    if not is_customer and not is_admin:
+        raise HTTPException(status_code=403, detail="仅下单客户或管理员可签收确认")
     if order["status"] != "delivered":
         raise HTTPException(status_code=400, detail="仅已送达订单可签收确认")
     order["status"] = "completed"
@@ -372,29 +387,54 @@ async def confirm_receive(
 # ==================== 订单实时追踪（P0-1: 司机/客户查看实时温度+车辆位置） ====================
 
 @router.get("/order-tracking/{order_id}")
-async def get_order_tracking(order_id: str):
+async def get_order_tracking(
+    order_id: str,
+    user: dict = Depends(require_role("admin", "warehouse", "driver", "customer")),
+):
     """根据订单ID获取车辆实时追踪数据（温度、位置、告警）"""
-    if order_id not in _customer_orders:
-        raise HTTPException(status_code=404, detail="订单不存在")
-    order = _customer_orders[order_id]
-
-    # 尝试从世界状态查找关联车辆（按订单ID匹配 waybill）
     ws = get_world_state()
+    
+    order = None
     matched_vehicle = None
     matched_waybill = None
-    for v in ws["vehicles"]:
-        for wb_id, wb_data in ws["waybills"].items():
-            if order["origin"] in wb_data.get("origin", "") or order["destination"] in wb_data.get("destination", ""):
-                if order.get("cargo_category") and order["cargo_category"] in wb_data.get("cargo_type", ""):
-                    matched_vehicle = v
-                    matched_waybill = wb_data
-                    break
-            elif order.get("driver_name") and v.get("waybill_no"):
+
+    if order_id in _customer_orders:
+        order = _customer_orders[order_id]
+    elif order_id in ws["waybills"]:
+        order = ws["waybills"][order_id]
+        for v in ws["vehicles"]:
+            if v.get("waybill_no") == order_id:
                 matched_vehicle = v
-                matched_waybill = wb_data
+                matched_waybill = order
                 break
-        if matched_vehicle:
-            break
+    else:
+        for wb_id, wb_data in ws["waybills"].items():
+            if wb_id == order_id:
+                order = wb_data
+                for v in ws["vehicles"]:
+                    if v.get("waybill_no") == wb_id:
+                        matched_vehicle = v
+                        matched_waybill = wb_data
+                        break
+                break
+
+    if not order:
+        raise HTTPException(status_code=404, detail="订单不存在")
+
+    if not matched_vehicle:
+        for v in ws["vehicles"]:
+            for wb_id, wb_data in ws["waybills"].items():
+                if order.get("origin") in wb_data.get("origin", "") or order.get("destination") in wb_data.get("destination", ""):
+                    if order.get("cargo_category") and order.get("cargo_category") in wb_data.get("cargo_type", ""):
+                        matched_vehicle = v
+                        matched_waybill = wb_data
+                        break
+            if order.get("driver_name") and v.get("waybill_no"):
+                matched_vehicle = v
+                matched_waybill = ws["waybills"].get(v["waybill_no"])
+                break
+            if matched_vehicle:
+                break
 
     # 如果没有精确匹配，取一辆在线的同温区车辆作为模拟追踪数据
     if not matched_vehicle:
@@ -502,8 +542,11 @@ async def submit_quality_feedback(
 
 
 @router.get("/quality-feedback/{order_id}")
-async def get_quality_feedback(order_id: str):
-    """查询订单品质反馈"""
+async def get_quality_feedback(
+    order_id: str,
+    user: dict = Depends(require_role("admin", "warehouse", "customer", "driver")),
+):
+    """查询订单品质反馈（客户、司机、管理员均可查看）"""
     fb = _quality_feedbacks.get(order_id)
     if not fb:
         return {"has_feedback": False, "feedback": None}
@@ -517,16 +560,131 @@ async def delete_order(
     order_id: str,
     user: dict = Depends(get_current_user),
 ):
-    """删除已完成订单（司机/客户均可删除）"""
+    """
+    删除/取消订单：
+    - 管理员/仓库经理：可删除任何状态的订单
+    - 客户：仅 pending/accepted/completed 可操作
+    - 司机：仅 pending/accepted/completed 可操作
+    """
     if order_id not in _customer_orders:
         raise HTTPException(status_code=404, detail="订单不存在")
     order = _customer_orders[order_id]
     user_id = user.get("sub", "")
+    user_role = user.get("role", "")
     is_driver = order.get("driver_id") == user_id
     is_customer = order.get("customer_id") == user_id
-    if not is_driver and not is_customer:
-        raise HTTPException(status_code=403, detail="无权删除此订单")
-    if order["status"] != "completed":
-        raise HTTPException(status_code=400, detail="仅已完成订单可删除")
-    del _customer_orders[order_id]
-    return {"status": "ok", "message": f"订单 {order_id} 已删除"}
+    is_admin = user_role in ("admin", "warehouse")
+
+    if not is_driver and not is_customer and not is_admin:
+        raise HTTPException(status_code=403, detail="无权操作此订单")
+
+    if is_admin:
+        order["status"] = "cancelled"
+        order["updated_at"] = datetime.utcnow().isoformat()
+        return {"status": "ok", "message": f"订单 {order_id} 已取消"}
+
+    if order["status"] in ("pending", "accepted", "completed"):
+        order["status"] = "cancelled"
+        order["updated_at"] = datetime.utcnow().isoformat()
+        return {"status": "ok", "message": f"订单 {order_id} 已取消"}
+
+    raise HTTPException(
+        status_code=400,
+        detail=f"订单状态 '{order['status']}' 不允许删除，仅管理员可操作运输中的订单",
+    )
+
+
+# ==================== 统一订单管理（管理员/仓库经理） ====================
+
+@router.get("/all-orders")
+async def get_all_orders(user: dict = Depends(get_current_user)):
+    """
+    获取所有订单（统一视图）：
+    - 合并 customer 订单 + world_state 运输中运单
+    - 统一状态机: pending → accepted → in_transit → delivered → completed
+    - 管理员/仓库经理可用
+    """
+    ws = get_world_state()
+    merged = {}
+
+    # 1. 先加载 customer 订单（真实 CRUD 订单）
+    for order_id, order in _customer_orders.items():
+        merged[order_id] = {
+            "waybill_id": order_id,
+            "order_id": order_id,
+            "cargo_name": order.get("cargo_name", ""),
+            "cargo_category": order.get("cargo_category", "冷链"),
+            "origin": order.get("origin", ""),
+            "destination": order.get("destination", ""),
+            "quantity": order.get("quantity", 0),
+            "unit": order.get("unit", "kg"),
+            "status": order.get("status", "pending"),
+            "driver_id": order.get("driver_id", ""),
+            "driver_name": order.get("driver_name", ""),
+            "customer_id": order.get("customer_id", ""),
+            "customer_name": order.get("customer_name", ""),
+            "temperature_requirement": order.get("temperature_requirement", ""),
+            "created_at": order.get("created_at", ""),
+            "updated_at": order.get("updated_at", ""),
+            "price": order.get("price", 0),
+            "weight_kg": order.get("weight_kg", 0),
+            "source": "customer_order",  # 标记来源
+        }
+
+    # 2. 补充 world_state 中运输中的运单（如果没有被 customer 订单覆盖）
+    for wb_id, wb_data in ws.get("waybills", {}).items():
+        if wb_id not in merged:
+            merged[wb_id] = {
+                "waybill_id": wb_id,
+                "order_id": wb_id,
+                "cargo_name": wb_data.get("cargo_name", wb_data.get("cargo_type", "")),
+                "cargo_category": wb_data.get("cargo_category", "冷链"),
+                "origin": wb_data.get("origin", ""),
+                "destination": wb_data.get("destination", ""),
+                "quantity": wb_data.get("quantity", 0),
+                "unit": wb_data.get("unit", "kg"),
+                "status": wb_data.get("status", "in_transit"),
+                "driver_id": wb_data.get("driver_id", ""),
+                "driver_name": wb_data.get("driver_name", ""),
+                "customer_id": "",
+                "customer_name": "",
+                "temperature_requirement": wb_data.get("temperature_requirement", ""),
+                "created_at": wb_data.get("created_at", ""),
+                "updated_at": wb_data.get("updated_at", ""),
+                "price": 0,
+                "weight_kg": wb_data.get("quantity", 0),
+                "source": "world_simulation",
+            }
+
+    orders_list = list(merged.values())
+    orders_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"count": len(orders_list), "orders": orders_list}
+
+
+class AdminAssignDriver(BaseModel):
+    driver_id: str
+    driver_name: str = ""
+    vehicle_id: str = ""
+    notes: str = ""
+
+@router.post("/admin-assign-driver/{order_id}")
+async def admin_assign_driver(
+    order_id: str,
+    data: AdminAssignDriver,
+    user: dict = Depends(get_current_user),
+):
+    """管理员/仓库经理分配司机"""
+    if order_id not in _customer_orders:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    order = _customer_orders[order_id]
+    if order["status"] not in ("pending", "created"):
+        # 兼容旧状态
+        if order["status"] not in ("pending", "accepted"):
+            raise HTTPException(status_code=400, detail="仅待接单订单可分配司机")
+    order["status"] = "accepted"
+    order["driver_id"] = data.driver_id
+    order["driver_name"] = data.driver_name or data.driver_id
+    order["updated_at"] = datetime.utcnow().isoformat()
+    if data.notes:
+        order["notes"] = (order.get("notes", "") + f" [管理员备注: {data.notes}]").strip()
+    return {"status": "ok", "order": order}

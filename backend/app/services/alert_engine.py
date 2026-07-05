@@ -75,6 +75,8 @@ class AlertEngine:
 
         # 1. 即时触发类规则
         for rule in self._rules:
+            if rule.get("enabled", True) is False:
+                continue
             field = rule["field"]
             value = sensor_data.get(field)
 
@@ -109,8 +111,9 @@ class AlertEngine:
                 alerts.append(alert)
 
         # 2. 车门超时开启规则（持续时间判断）
+        door_rule_enabled = any(r["type"] == "door_open_timeout" and r.get("enabled", True) for r in self._rules)
         door_status = sensor_data.get("door_status")
-        if door_status is not None:
+        if door_rule_enabled and door_status is not None:
             if door_status == 1:
                 if state["door_open_time"] is None:
                     state["door_open_time"] = now
@@ -129,14 +132,14 @@ class AlertEngine:
                         })
                         state["door_alert_sent"] = True
             else:
-                # 车门关闭，重置状态
                 state["door_open_time"] = None
                 state["door_alert_sent"] = False
 
         # 3. 温度骤变规则（变化率判断）
+        spike_rule_enabled = any(r["type"] == "temperature_spike" and r.get("enabled", True) for r in self._rules)
         temperature = sensor_data.get("temperature")
-        if temperature is not None and state["last_temperature"] is not None:
-            time_diff = (now - state["last_temp_time"]).total_seconds() / 60.0  # 分钟
+        if spike_rule_enabled and temperature is not None and state["last_temperature"] is not None:
+            time_diff = (now - state["last_temp_time"]).total_seconds() / 60.0
             if time_diff > 0:
                 temp_diff = abs(temperature - state["last_temperature"])
                 rate = temp_diff / time_diff
@@ -157,8 +160,9 @@ class AlertEngine:
             state["last_temp_time"] = now
 
         # 4. 设备离线规则（心跳超时判断）
+        offline_rule_enabled = any(r["type"] == "device_offline" and r.get("enabled", True) for r in self._rules)
         offline_seconds = (now - state["last_heartbeat"]).total_seconds()
-        if offline_seconds > TEMP_THRESHOLD["DEVICE_OFFLINE_SECONDS"] and not state["offline_alert_sent"]:
+        if offline_rule_enabled and offline_seconds > TEMP_THRESHOLD["DEVICE_OFFLINE_SECONDS"] and not state["offline_alert_sent"]:
             alerts.append({
                 "device_id": device_id,
                 "alert_type": "device_offline",
@@ -206,7 +210,10 @@ class AlertEngine:
         return True
 
     def add_rule(self, rule: dict):
-        """动态添加告警规则"""
+        """动态添加或更新告警规则"""
+        rule_type = rule.get("type")
+        if rule_type:
+            self._rules = [r for r in self._rules if r["type"] != rule_type]
         self._rules.append(rule)
 
     def remove_rule(self, rule_type: str):
@@ -216,14 +223,16 @@ class AlertEngine:
     def get_rules(self) -> list[dict]:
         """返回所有规则，包括即时规则和时间相关内置规则"""
         all_rules = self._rules.copy()
-        # 添加时间相关内置规则（用于前端展示）
+        for r in all_rules:
+            if "enabled" not in r:
+                r["enabled"] = True
         all_rules.extend([
             {"field": "door_status", "op": "持续>", "value": TEMP_THRESHOLD["DOOR_TIMEOUT_SECONDS"],
-             "severity": "normal", "type": "door_open_timeout", "msg": "车门超时开启"},
+             "severity": "normal", "type": "door_open_timeout", "msg": "车门超时开启", "enabled": True},
             {"field": "temperature", "op": "变化率>", "value": TEMP_THRESHOLD["TEMP_SPIKE_RATE"],
-             "severity": "severe", "type": "temperature_spike", "msg": "温度骤变"},
+             "severity": "severe", "type": "temperature_spike", "msg": "温度骤变", "enabled": True},
             {"field": "heartbeat", "op": "超时>", "value": TEMP_THRESHOLD["DEVICE_OFFLINE_SECONDS"],
-             "severity": "severe", "type": "device_offline", "msg": "设备离线"},
+             "severity": "severe", "type": "device_offline", "msg": "设备离线", "enabled": True},
         ])
         return all_rules
 

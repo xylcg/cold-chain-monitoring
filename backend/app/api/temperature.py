@@ -2,12 +2,12 @@
 温度监控 API
 模块2: 温度异常实时检测 (LSTM)
 模块3: 温控趋势智能预测 (LSTM/Transformer)
-(已修复: 统一移除认证依赖 + 修正参数名)
 """
 import numpy as np
 from datetime import datetime, timedelta
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from ..core.security import require_role
 from ..services.redis_service import redis_service
 from ..services.kafka_service import kafka_service
 from ..services.model_service import detect_anomaly, predict_temperature_trend
@@ -33,7 +33,7 @@ def _generate_fallback_history(current_temp: float = 4.0, n_points: int = 60) ->
 
 
 @router.get("/current/{device_id}")
-async def get_current_temperature(device_id: str):
+async def get_current_temperature(device_id: str, user: dict = Depends(require_role("admin", "warehouse"))):
     """获取设备当前温度"""
     status = await redis_service.get_device_status(device_id)
     if status:
@@ -60,6 +60,7 @@ async def get_current_temperature(device_id: str):
 async def get_temperature_trend(
     device_id: str,
     horizon: int = 30,
+    user: dict = Depends(require_role("admin", "warehouse")),
 ):
     """
     获取温度预测趋势（未来30分钟）
@@ -105,6 +106,7 @@ async def get_temperature_trend(
 async def get_history(
     device_id: str,
     minutes: int = 60,
+    user: dict = Depends(require_role("admin", "warehouse")),
 ):
     """获取历史温度数据（用于图表）"""
     window_data = await redis_service.get_temperature_window(device_id)
@@ -136,6 +138,7 @@ async def get_history(
 @router.get("/anomaly/{device_id}")
 async def check_anomaly(
     device_id: str,
+    user: dict = Depends(require_role("admin", "warehouse")),
 ):
     """
     检查设备温度异常（模块2）

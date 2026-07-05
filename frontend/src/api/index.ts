@@ -73,13 +73,20 @@ export const alertAPI = {
 }
 
 export const geofenceAPI = {
-  getList: (type?: string) => api.get('/geofence', { params: { type } }),
+  getList: (params?: any) => api.get('/geofence', { params }),
   getDetail: (id: string) => api.get(`/geofence/${id}`),
-  create: (data: any) => api.post('/geofence', null, { params: data }),
-  update: (id: string, data: any) => api.put(`/geofence/${id}`, null, { params: data }),
+  create: (data: any) => api.post('/geofence', data),
+  update: (id: string, data: any) => api.put(`/geofence/${id}`, data),
   delete: (id: string) => api.delete(`/geofence/${id}`),
   getEvents: (params?: any) => api.get('/geofence/events', { params }),
+  resolveEvent: (eventId: string) => api.post(`/geofence/events/${eventId}/resolve`),
   getDeviceStatus: (deviceId: string) => api.get(`/geofence/device/${deviceId}/status`),
+  getGeoJSON: () => api.get('/geofence/geojson'),
+  generateRouteFences: (routeId: string, cities: string[], bufferMeters?: number) =>
+    api.post(`/geofence/route/${routeId}/generate`, null, { params: { cities: cities.join(','), buffer_meters: bufferMeters } }),
+  getStats: () => api.get('/geofence/stats'),
+  getAlerts: (params?: any) => api.get('/geofence/alerts', { params }),
+  processPosition: (data: any) => api.post('/geofence/process-position', data),
 }
 
 export const traceabilityAPI = {
@@ -92,7 +99,7 @@ export const traceabilityAPI = {
   verifyBlockchain: (waybillId: string) => api.get(`/traceability/blockchain/verify/${waybillId}`),
   getLedger: (limit?: number) => api.get('/traceability/blockchain/ledger', { params: { limit } }),
   // 运单管理
-  getWaybills: () => api.get('/traceability/waybills'),
+  getWaybills: (refresh?: boolean) => api.get('/traceability/waybills', { params: { refresh } }),
   createWaybill: (data: any) => api.post('/traceability/waybill', data),
   getWaybillDetail: (waybillId: string) => api.get(`/traceability/waybill/${waybillId}`),
 }
@@ -125,6 +132,9 @@ export const customerAPI = {
   // P0: 品质反馈
   submitQualityFeedback: (orderId: string, data: any) => api.post(`/customer/quality-feedback/${orderId}`, data),
   getQualityFeedback: (orderId: string) => api.get(`/customer/quality-feedback/${orderId}`),
+  // 管理员/仓库经理：统一订单管理
+  getAllOrders: () => api.get('/customer/all-orders'),
+  adminAssignDriver: (orderId: string, data: any) => api.post(`/customer/admin-assign-driver/${orderId}`, data),
 }
 
 export const vehicleAPI = {
@@ -144,11 +154,13 @@ export const maintenanceAPI = {
 
 export const routeAPI = {
   plan: (data: any) => api.post('/routes/plan', data),
-  quickPlan: (origin: string, destination: string, cargoType?: string, priority?: string) =>
-    api.get('/routes/plan', { params: { origin, destination, cargo_type: cargoType, priority } }),
+  singlePlan: (data: any) => api.post('/routes/plan/single', data),
+  replan: (data: any) => api.post('/routes/replan', data),
   getActive: () => api.get('/routes/active'),
   getCities: () => api.get('/routes/cities'),
   getCargoTypes: () => api.get('/routes/cargo-types'),
+  getSensitivityLevels: () => api.get('/routes/sensitivity-levels'),
+  getTransportModes: () => api.get('/routes/transport-modes'),
 }
 
 export const dispatchAPI = {

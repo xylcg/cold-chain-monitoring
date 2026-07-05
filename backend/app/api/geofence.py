@@ -1,340 +1,456 @@
 """
 冷链电子围栏管理 API
-模块8: 冷链电子围栏管理
-- 创建/编辑/删除电子围栏
-- 围栏进出事件记录
-- 围栏区域温控衔接监控
+支持4种围栏类型：圆形点围栏、带状线路围栏、多边形围栏、行政城市围栏
+联动：路线规划、设备心跳、温控数据、中转分拨
 """
-from datetime import datetime, timedelta
-from typing import Optional, List
+from datetime import datetime
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 
-from ..core.security import get_current_user
-from ..services.redis_service import redis_service
+from ..core.security import get_current_user, require_role
+from ..schemas.geofence import (
+    FenceCreate, FenceUpdate, FenceInDB, FenceEvent, FenceEventCreate,
+    FenceType, FenceCategory, AlertLevel, GeoJSONFeature
+)
+from ..services.fence_store import (
+    create_fence, get_fence, get_fences, update_fence, delete_fence,
+    create_fence_event, get_fence_events, resolve_event,
+    get_all_fences_geojson, get_fence_stats
+)
+from ..services.fence_judge import is_point_in_fence, find_containing_fences
+from ..services.fence_event_processor import (
+    process_vehicle_position, process_heartbeat_offline, get_active_fence_alerts,
+    get_alerts_by_level, get_vehicle_state, update_vehicle_state
+)
+from ..services.world_state import get_world_state, CITY_COORDS
 
 router = APIRouter(prefix="/api/v1/geofence", tags=["电子围栏"])
 
-# 内存存储电子围栏数据（后续可迁移到 PostgreSQL）
-_geofences: list[dict] = []
-_geofence_events: list[dict] = []
 
+# ==================== 常量定义 ====================
 
-# ==================== 初始化默认围栏 ====================
-def _init_default_geofences():
-    if not _geofences:
-        _geofences.extend([
-            {
-                "id": "gf-001",
-                "name": "华北中心冷库",
-                "type": "cold_storage",
-                "center": {"lat": 39.9042, "lng": 116.4074},
-                "radius": 500,
-                "address": "北京市朝阳区",
-                "contact": "张经理",
-                "phone": "13800138001",
-                "temp_range": {"min": -25, "max": -15},
-                "created_at": datetime.utcnow().isoformat(),
-            },
-            {
-                "id": "gf-002",
-                "name": "华东配送中心",
-                "type": "distribution_center",
-                "center": {"lat": 31.2304, "lng": 121.4737},
-                "radius": 800,
-                "address": "上海市浦东新区",
-                "contact": "李经理",
-                "phone": "13800138002",
-                "temp_range": {"min": 0, "max": 8},
-                "created_at": datetime.utcnow().isoformat(),
-            },
-            {
-                "id": "gf-003",
-                "name": "华南前置仓",
-                "type": "front_warehouse",
-                "center": {"lat": 23.1291, "lng": 113.2644},
-                "radius": 300,
-                "address": "广州市天河区",
-                "contact": "王经理",
-                "phone": "13800138003",
-                "temp_range": {"min": -18, "max": -12},
-                "created_at": datetime.utcnow().isoformat(),
-            },
-            {
-                "id": "gf-004",
-                "name": "西南冷链基地",
-                "type": "cold_storage",
-                "center": {"lat": 30.5728, "lng": 104.0668},
-                "radius": 600,
-                "address": "成都市高新区",
-                "contact": "赵经理",
-                "phone": "13800138004",
-                "temp_range": {"min": -25, "max": -15},
-                "created_at": datetime.utcnow().isoformat(),
-            },
-            {
-                "id": "gf-005",
-                "name": "华中分拨中心",
-                "type": "distribution_center",
-                "center": {"lat": 30.5928, "lng": 114.3055},
-                "radius": 500,
-                "address": "武汉市江汉区",
-                "contact": "陈经理",
-                "phone": "13800138005",
-                "temp_range": {"min": 0, "max": 4},
-                "created_at": datetime.utcnow().isoformat(),
-            },
-        ])
-
-
-_init_default_geofences()
-
-
-# ==================== 围栏事件（必须在 /{geofence_id} 之前注册） ====================
-
-@router.get("/events")
-async def get_geofence_events(
-    geofence_id: Optional[str] = None,
-    device_id: Optional[str] = None,
-    event_type: Optional[str] = None,
-    limit: int = 50,
+@router.get("/constants")
+async def get_fence_constants(
     user: dict = Depends(get_current_user),
 ):
-    """查询围栏进出事件"""
-    # 如果事件为空，生成一些模拟事件
-    if not _geofence_events:
-        _seed_mock_events()
+    """获取电子围栏相关常量"""
+    return {
+        "fence_types": [
+            {"value": t.value, "label": _fence_type_label(t.value)}
+            for t in FenceType
+        ],
+        "fence_categories": [
+            {"value": c.value, "label": _fence_category_label(c.value)}
+            for c in FenceCategory
+        ],
+        "alert_levels": [
+            {"value": a.value, "label": _alert_level_label(a.value)}
+            for a in AlertLevel
+        ],
+        "city_coords": CITY_COORDS,
+    }
 
-    events = list(_geofence_events)
-    if geofence_id:
-        events = [e for e in events if e["geofence_id"] == geofence_id]
-    if device_id:
-        events = [e for e in events if e["device_id"] == device_id]
-    if event_type:
-        events = [e for e in events if e["event_type"] == event_type]
 
-    events = sorted(events, key=lambda e: e["timestamp"], reverse=True)
-    return {"count": len(events[:limit]), "events": events[:limit]}
+# ==================== GeoJSON 导出 ====================
 
+@router.get("/geojson")
+async def export_geojson(
+    fence_type: Optional[str] = Query(None, description="围栏类型"),
+    user: dict = Depends(get_current_user),
+):
+    """导出围栏为 GeoJSON 格式（用于地图渲染）"""
+    geojson = get_all_fences_geojson()
+    
+    if fence_type:
+        try:
+            type_enum = FenceType(fence_type)
+            geojson["features"] = [
+                f for f in geojson["features"]
+                if f["properties"]["type"] == type_enum.value
+            ]
+        except ValueError:
+            pass
+    
+    return JSONResponse(content=geojson)
+
+
+# ==================== 统计信息 ====================
+
+@router.get("/stats")
+async def get_fence_statistics(
+    user: dict = Depends(get_current_user),
+):
+    """获取电子围栏统计信息"""
+    stats = get_fence_stats()
+    return stats
+
+
+# ==================== 围栏列表 ====================
+
+@router.get("")
+async def list_fences(
+    fence_type: Optional[str] = Query(None, description="围栏类型"),
+    category: Optional[str] = Query(None, description="围栏类别"),
+    active: Optional[bool] = Query(None, description="是否启用"),
+    route_id: Optional[str] = Query(None, description="关联路线ID"),
+    user: dict = Depends(get_current_user),
+):
+    """获取电子围栏列表"""
+    type_enum = FenceType(fence_type) if fence_type else None
+    category_enum = FenceCategory(category) if category else None
+    
+    fences = get_fences(
+        fence_type=type_enum,
+        category=category_enum,
+        active=active,
+        route_id=route_id,
+    )
+    
+    return {
+        "count": len(fences),
+        "fences": [f.dict() for f in fences]
+    }
+
+
+# ==================== 围栏告警 ====================
+
+@router.get("/alerts")
+async def get_all_fence_alerts(
+    hours: int = Query(24, description="最近N小时"),
+    level: Optional[str] = Query(None, description="告警等级"),
+    user: dict = Depends(get_current_user),
+):
+    """获取围栏告警列表"""
+    if level:
+        try:
+            level_enum = AlertLevel(level)
+            events = get_alerts_by_level(level_enum, hours=hours)
+        except ValueError:
+            events = get_active_fence_alerts(hours=hours)
+    else:
+        events = get_active_fence_alerts(hours=hours)
+    
+    return {
+        "count": len(events),
+        "alerts": [e.dict() for e in events]
+    }
+
+
+@router.get("/alerts/active")
+async def get_active_alerts(
+    hours: int = Query(24, description="最近N小时"),
+    user: dict = Depends(get_current_user),
+):
+    """获取活跃的围栏告警"""
+    events = get_active_fence_alerts(hours=hours)
+    return {
+        "count": len(events),
+        "alerts": [e.dict() for e in events]
+    }
+
+
+# ==================== 围栏事件 ====================
+
+@router.get("/events")
+async def get_fence_events_api(
+    fence_id: Optional[str] = Query(None, description="围栏ID"),
+    vehicle_id: Optional[str] = Query(None, description="车辆ID"),
+    event_type: Optional[str] = Query(None, description="事件类型"),
+    alert_level: Optional[str] = Query(None, description="告警等级"),
+    resolved: Optional[bool] = Query(None, description="是否已处理"),
+    hours: Optional[int] = Query(24, description="最近N小时"),
+    user: dict = Depends(get_current_user),
+):
+    """查询围栏事件"""
+    level_enum = AlertLevel(alert_level) if alert_level else None
+    
+    events = get_fence_events(
+        fence_id=fence_id,
+        vehicle_id=vehicle_id,
+        event_type=event_type,
+        alert_level=level_enum,
+        resolved=resolved,
+        hours=hours,
+    )
+    
+    return {
+        "count": len(events),
+        "events": [e.dict() for e in events]
+    }
+
+
+# ==================== 创建围栏 ====================
+
+@router.post("")
+async def create_fence_api(
+    data: FenceCreate,
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """创建电子围栏"""
+    fence = create_fence(data)
+    return {"status": "ok", "fence": fence.dict()}
+
+
+# ==================== 围栏事件处理 ====================
 
 @router.post("/events/check")
-async def check_geofence_event(
-    device_id: str,
-    lat: float,
-    lng: float,
-    temperature: float = 0.0,
+async def check_fence_event(
+    vehicle_id: str,
+    plate_number: str = "",
+    lat: float = Query(..., ge=-90, le=90),
+    lng: float = Query(..., ge=-180, le=180),
+    temperature_c: Optional[float] = None,
+    heartbeat_time: Optional[datetime] = None,
+    user: dict = Depends(require_role("admin", "warehouse", "driver")),
 ):
-    """
-    检查设备是否进入/离开电子围栏
-    由传感器数据上报时自动调用
-    """
-    events = []
-    for gf in _geofences:
-        center = gf["center"]
-        distance = _haversine_distance(lat, lng, center["lat"], center["lng"])
-        is_inside = distance <= gf["radius"]
+    """检查车辆位置是否触发围栏事件"""
+    events = process_vehicle_position(
+        vehicle_id=vehicle_id,
+        plate_number=plate_number,
+        lat=lat,
+        lng=lng,
+        temperature_c=temperature_c,
+        heartbeat_time=heartbeat_time,
+        city_coords=CITY_COORDS,
+    )
+    
+    return {
+        "vehicle_id": vehicle_id,
+        "location": {"lat": lat, "lng": lng},
+        "event_count": len(events),
+        "events": [e.dict() for e in events]
+    }
 
-        event = {
-            "geofence_id": gf["id"],
-            "geofence_name": gf["name"],
-            "device_id": device_id,
-            "is_inside": is_inside,
-            "distance_meters": round(distance, 1),
-            "temperature": temperature,
-            "temp_in_range": (
-                gf["temp_range"]["min"] <= temperature <= gf["temp_range"]["max"]
-            ) if is_inside else True,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
 
-        if is_inside:
-            event["event_type"] = "inside"
-            if not event["temp_in_range"]:
-                event["warning"] = f"温度{temperature}°C超出围栏要求[{gf['temp_range']['min']}~{gf['temp_range']['max']}°C]"
-        else:
-            event["event_type"] = "outside"
+@router.post("/events/offline")
+async def report_offline_event(
+    vehicle_id: str,
+    plate_number: str = "",
+    last_lat: float = Query(..., ge=-90, le=90),
+    last_lng: float = Query(..., ge=-180, le=180),
+    offline_duration_seconds: float = Query(..., ge=0),
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """上报设备离线事件"""
+    events = process_heartbeat_offline(
+        vehicle_id=vehicle_id,
+        plate_number=plate_number,
+        last_lat=last_lat,
+        last_lng=last_lng,
+        offline_duration_seconds=offline_duration_seconds,
+        city_coords=CITY_COORDS,
+    )
+    
+    return {
+        "vehicle_id": vehicle_id,
+        "offline_duration_minutes": int(offline_duration_seconds / 60),
+        "event_count": len(events),
+        "events": [e.dict() for e in events]
+    }
 
-        _geofence_events.insert(0, event)
-        events.append(event)
 
-    return {"device_id": device_id, "events": events}
+# ==================== 路线围栏生成 ====================
+
+@router.post("/route/{route_id}/generate")
+async def generate_route_fences(
+    route_id: str,
+    cities: List[str] = Query(..., description="路线途经城市列表"),
+    buffer_meters: int = Query(100, ge=50, le=500),
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """根据路线自动生成带状围栏"""
+    generated_fences = []
+    
+    for i in range(len(cities) - 1):
+        from_city = cities[i]
+        to_city = cities[i + 1]
+        
+        from_coord = CITY_COORDS.get(from_city)
+        to_coord = CITY_COORDS.get(to_city)
+        
+        if not from_coord or not to_coord:
+            continue
+        
+        mid_lat = (from_coord[0] + to_coord[0]) / 2
+        mid_lng = (from_coord[1] + to_coord[1]) / 2
+        
+        fence_data = FenceCreate(
+            name=f"{from_city}-{to_city}干线",
+            fence_type=FenceType.LINE_BUFFER,
+            category=FenceCategory.ROUTE_SEGMENT,
+            data={
+                "points": [
+                    {"lat": from_coord[0], "lng": from_coord[1]},
+                    {"lat": mid_lat, "lng": mid_lng},
+                    {"lat": to_coord[0], "lng": to_coord[1]},
+                ],
+                "buffer_meters": buffer_meters,
+                "start_city": from_city,
+                "end_city": to_city,
+            },
+            description=f"{from_city}到{to_city}规划行驶路线",
+            active=True,
+            alert_level=AlertLevel.SEVERE,
+            tags=["route", from_city, to_city],
+            route_id=route_id,
+        )
+        
+        fence = create_fence(fence_data)
+        generated_fences.append(fence.dict())
+    
+    return {
+        "status": "ok",
+        "route_id": route_id,
+        "generated_count": len(generated_fences),
+        "fences": generated_fences,
+    }
+
+
+# ==================== 动态路径路由（必须放在最后） ====================
+
+@router.get("/{fence_id}")
+async def get_fence_detail(
+    fence_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """获取单个电子围栏详情"""
+    fence = get_fence(fence_id)
+    if not fence:
+        raise HTTPException(status_code=404, detail="电子围栏不存在")
+    return fence.dict()
+
+
+@router.put("/{fence_id}")
+async def update_fence_api(
+    fence_id: str,
+    data: FenceUpdate,
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """更新电子围栏"""
+    fence = update_fence(fence_id, data)
+    if not fence:
+        raise HTTPException(status_code=404, detail="电子围栏不存在")
+    return {"status": "ok", "fence": fence.dict()}
+
+
+@router.delete("/{fence_id}")
+async def delete_fence_api(
+    fence_id: str,
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """删除电子围栏"""
+    success = delete_fence(fence_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="电子围栏不存在")
+    return {"status": "ok", "deleted": fence_id}
+
+
+@router.post("/events/{event_id}/resolve")
+async def resolve_fence_event(
+    event_id: str,
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """处理围栏事件"""
+    event = resolve_event(event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="事件不存在")
+    return {"status": "ok", "event": event.dict()}
+
+
+@router.get("/alerts/by-level/{level}")
+async def get_alerts_by_level_api(
+    level: str,
+    hours: int = Query(24, description="最近N小时"),
+    user: dict = Depends(get_current_user),
+):
+    """按告警等级获取围栏告警"""
+    try:
+        level_enum = AlertLevel(level)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的告警等级")
+    
+    events = get_alerts_by_level(level_enum, hours=hours)
+    return {
+        "count": len(events),
+        "alerts": [e.dict() for e in events]
+    }
 
 
 @router.get("/device/{device_id}/status")
-async def get_device_geofence_status(
+async def get_device_fence_status(
     device_id: str,
     user: dict = Depends(get_current_user),
 ):
     """获取设备当前围栏状态"""
-    status = await redis_service.get_device_status(device_id)
-    if not status:
-        raise HTTPException(status_code=404, detail="设备离线或不存在")
-
-    lat = float(status.get("latitude", 0))
-    lng = float(status.get("longitude", 0))
-    temperature = float(status.get("temperature", 0))
-
-    fence_status = []
-    for gf in _geofences:
-        center = gf["center"]
-        distance = _haversine_distance(lat, lng, center["lat"], center["lng"])
-        is_inside = distance <= gf["radius"]
-        fence_status.append({
-            "geofence_id": gf["id"],
-            "geofence_name": gf["name"],
-            "is_inside": is_inside,
-            "distance_meters": round(distance, 1),
-        })
-
+    ws = get_world_state()
+    vehicle = next((v for v in ws.get("vehicles", []) if v["device_id"] == device_id), None)
+    
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="设备不存在或离线")
+    
+    lat = vehicle["latitude"]
+    lng = vehicle["longitude"]
+    temperature = vehicle["temperature"]
+    
+    state = get_vehicle_state(device_id)
+    
+    containing_fences = []
+    all_fences = [FenceInDB(**f) for f in ws.get("fences", [])]
+    for fence in all_fences:
+        if is_point_in_fence(lat, lng, fence, CITY_COORDS):
+            containing_fences.append({
+                "fence_id": fence.fence_id,
+                "fence_name": fence.name,
+                "fence_type": fence.fence_type.value,
+                "category": fence.category.value,
+                "city_section": state.get("current_city_section"),
+            })
+    
     return {
         "device_id": device_id,
         "location": {"lat": lat, "lng": lng},
         "temperature": temperature,
-        "fences": fence_status,
+        "current_fences": containing_fences,
+        "heartbeat_status": state.get("heartbeat_status", "online"),
+        "current_city_section": state.get("current_city_section"),
+        "consecutive_off_route": state.get("consecutive_off_route", 0),
     }
-
-
-# ==================== 围栏管理 ====================
-
-@router.get("")
-async def list_geofences(
-    type: Optional[str] = None,
-    user: dict = Depends(get_current_user),
-):
-    """获取电子围栏列表"""
-    result = _geofences
-    if type:
-        result = [g for g in result if g["type"] == type]
-    return {"count": len(result), "geofences": result}
-
-
-@router.get("/{geofence_id}")
-async def get_geofence(
-    geofence_id: str,
-    user: dict = Depends(get_current_user),
-):
-    """获取单个电子围栏详情"""
-    for g in _geofences:
-        if g["id"] == geofence_id:
-            return g
-    raise HTTPException(status_code=404, detail="电子围栏不存在")
-
-
-@router.post("")
-async def create_geofence(
-    name: str,
-    type: str,
-    lat: float,
-    lng: float,
-    radius: float,
-    address: str = "",
-    contact: str = "",
-    phone: str = "",
-    temp_min: float = -25,
-    temp_max: float = -15,
-    user: dict = Depends(get_current_user),
-):
-    """创建电子围栏"""
-    import uuid
-    geofence = {
-        "id": f"gf-{uuid.uuid4().hex[:6]}",
-        "name": name,
-        "type": type,
-        "center": {"lat": lat, "lng": lng},
-        "radius": radius,
-        "address": address,
-        "contact": contact,
-        "phone": phone,
-        "temp_range": {"min": temp_min, "max": temp_max},
-        "created_at": datetime.utcnow().isoformat(),
-    }
-    _geofences.append(geofence)
-    return {"status": "ok", "geofence": geofence}
-
-
-@router.put("/{geofence_id}")
-async def update_geofence(
-    geofence_id: str,
-    name: Optional[str] = None,
-    radius: Optional[float] = None,
-    contact: Optional[str] = None,
-    phone: Optional[str] = None,
-    temp_min: Optional[float] = None,
-    temp_max: Optional[float] = None,
-    user: dict = Depends(get_current_user),
-):
-    """更新电子围栏"""
-    for g in _geofences:
-        if g["id"] == geofence_id:
-            if name: g["name"] = name
-            if radius: g["radius"] = radius
-            if contact: g["contact"] = contact
-            if phone: g["phone"] = phone
-            if temp_min is not None: g["temp_range"]["min"] = temp_min
-            if temp_max is not None: g["temp_range"]["max"] = temp_max
-            return {"status": "ok", "geofence": g}
-    raise HTTPException(status_code=404, detail="电子围栏不存在")
-
-
-@router.delete("/{geofence_id}")
-async def delete_geofence(
-    geofence_id: str,
-    user: dict = Depends(get_current_user),
-):
-    """删除电子围栏"""
-    global _geofences
-    original_len = len(_geofences)
-    _geofences = [g for g in _geofences if g["id"] != geofence_id]
-    if len(_geofences) == original_len:
-        raise HTTPException(status_code=404, detail="电子围栏不存在")
-    return {"status": "ok", "deleted": geofence_id}
 
 
 # ==================== 辅助函数 ====================
 
-def _seed_mock_events():
-    """生成模拟进出事件"""
-    import random
-    random.seed(42)
-    device_ids = ["DEV-S001", "DEV-S002", "DEV-S003", "DEV-S004", "DEV-S005"]
-    base_time = datetime.utcnow()
-    for i in range(30):
-        gf = random.choice(_geofences)
-        device_id = random.choice(device_ids)
-        lat_offset = random.uniform(-0.01, 0.01)
-        lng_offset = random.uniform(-0.01, 0.01)
-        is_inside = random.choice([True, True, True, False])
-        temp = round(random.uniform(-28, 28), 1)
-        distance = random.uniform(50, 1200) if not is_inside else random.uniform(20, 450)
-        temp_in_range = True
-        warning = None
-        if is_inside:
-            tr = gf["temp_range"]
-            temp_in_range = tr["min"] <= temp <= tr["max"]
-            if not temp_in_range:
-                warning = f"温度{temp}°C超出围栏要求[{tr['min']}~{tr['max']}°C]"
-
-        _geofence_events.append({
-            "geofence_id": gf["id"],
-            "geofence_name": gf["name"],
-            "device_id": device_id,
-            "event_type": "inside" if is_inside else "outside",
-            "is_inside": is_inside,
-            "distance_meters": round(distance, 1),
-            "temperature": temp,
-            "temp_in_range": temp_in_range,
-            "warning": warning,
-            "timestamp": (base_time - timedelta(minutes=i * 30)).isoformat(),
-        })
+def _fence_type_label(value: str) -> str:
+    labels = {
+        "circle": "圆形点围栏",
+        "line_buffer": "带状线路围栏",
+        "polygon": "多边形围栏",
+        "city": "行政城市围栏",
+    }
+    return labels.get(value, value)
 
 
-def _haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """计算两点间的 Haversine 距离（米）"""
-    import math
-    R = 6371000
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lng2 - lng1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
+def _fence_category_label(value: str) -> str:
+    labels = {
+        "warehouse": "仓库",
+        "hub": "枢纽冷仓",
+        "service_area": "高速服务区",
+        "repair_station": "维修站点",
+        "route_segment": "路线干线",
+        "forbidden": "禁行区",
+        "high_temp": "高温管控区",
+        "restricted": "风险路段",
+        "city_zone": "城市区域",
+        "checkpoint": "检查点",
+    }
+    return labels.get(value, value)
+
+
+def _alert_level_label(value: str) -> str:
+    labels = {
+        "severe": "严重",
+        "warning": "警告",
+        "normal": "一般",
+        "info": "正常",
+    }
+    return labels.get(value, value)
