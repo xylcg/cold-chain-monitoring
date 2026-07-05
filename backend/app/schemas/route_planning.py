@@ -64,6 +64,8 @@ class RouteSegment(BaseModel):
 class RoutePlanRequest(BaseModel):
     origin: str = Field(..., description="出发城市")
     destination: str = Field(..., description="目的城市")
+    additional_origins: List[str] = Field([], description="额外出发城市列表")
+    additional_destinations: List[str] = Field([], description="额外目的城市列表")
     transport_mode: TransportMode = TransportMode.DIRECT
     temperature_sensitivity: TemperatureSensitivity = TemperatureSensitivity.MEDIUM
     cargo_type: str = Field("冷藏生鲜", description="货物品类")

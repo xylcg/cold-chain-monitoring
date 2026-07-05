@@ -29,34 +29,47 @@
           </div>
 
           <div class="form-group">
-            <label>运输模式</label>
-            <el-select v-model="form.transport_mode" placeholder="选择模式" style="width:100%">
-              <el-option v-for="m in transportModes" :key="m.value" :value="m.value">
-                {{ m.label }}
-              </el-option>
-            </el-select>
+            <label>智能判断结果</label>
+            <div class="auto-result-card">
+              <div class="result-row">
+                <span class="result-label">温敏等级</span>
+                <el-tag :type="getStrategyType(form.temperature_sensitivity)" size="medium">{{ getSensitivityLabel(form.temperature_sensitivity) }}物资</el-tag>
+              </div>
+              <div class="result-row">
+                <span class="result-label">运输模式</span>
+                <el-tag type="success" size="medium">{{ getTransportModeLabel(form.transport_mode) }}</el-tag>
+              </div>
+              <div class="result-row">
+                <span class="result-label">规划策略</span>
+                <el-tag :type="getStrategyType(form.temperature_sensitivity)" size="medium">{{ getStrategyLabel(form.temperature_sensitivity) }}</el-tag>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="form.transport_mode === 'multi_drop'" class="form-group multi-drop-section">
+            <label>沿途卸货点</label>
+            <div class="drop-points-list">
+              <div v-for="(point, idx) in form.multi_drop_points" :key="idx" class="drop-point-item">
+                <span class="point-index">{{ idx + 1 }}</span>
+                <el-select v-model="point.city" placeholder="选择城市" style="flex:1">
+                  <el-option v-for="c in cities" :key="c.name" :value="c.name">{{ c.name }}</el-option>
+                </el-select>
+                <el-input v-model="point.name" placeholder="门店/地址名称" style="flex:1; margin-left:8px" />
+                <el-input-number v-model="point.stop_duration_min" :min="5" :max="60" :step="5" placeholder="停留(分)" style="width:80px; margin-left:8px" />
+                <button class="btn-remove" @click="removeDropPoint(idx)">×</button>
+              </div>
+              <button class="btn-add-drop" @click="addDropPoint">+ 添加卸货点</button>
+            </div>
+            <p class="mode-hint">添加沿途需要停靠卸货的城市和门店，系统将智能排序最优停靠顺序</p>
           </div>
 
           <div class="form-group">
             <label>货物类型</label>
-            <el-select v-model="form.cargo_type" placeholder="选择类型" style="width:100%">
+            <el-select v-model="form.cargo_type" placeholder="选择类型" style="width:100%" @change="onCargoTypeChange">
               <el-option v-for="ct in cargoTypes" :key="ct.name" :value="ct.name">
                 {{ ct.name }} ({{ ct.temperature_range }})
               </el-option>
             </el-select>
-          </div>
-
-          <div class="form-group">
-            <label>温敏等级</label>
-            <div class="sensitivity-options">
-              <label v-for="sl in sensitivityLevels" :key="sl.value" class="sensitivity-radio">
-                <input type="radio" v-model="form.temperature_sensitivity" :value="sl.value" />
-                <div class="sensitivity-card" :class="sl.value">
-                  <div class="sensitivity-label">{{ sl.label }}</div>
-                  <div class="sensitivity-desc">{{ sl.description }}</div>
-                </div>
-              </label>
-            </div>
           </div>
 
           <div class="form-group">
@@ -174,6 +187,60 @@
                   <div class="overview-item">
                     <div class="ov-value">{{ selectedPlan.total_carbon_emission_kg }}</div>
                     <div class="ov-label">碳排放 (kg)</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 策略说明 -->
+              <div class="strategy-section">
+                <h4>规划策略</h4>
+                <div class="strategy-card">
+                  <div class="strategy-header">
+                    <el-tag :type="getStrategyType(selectedPlan.temperature_sensitivity)" size="large">
+                      {{ getStrategyLabel(selectedPlan.temperature_sensitivity) }}
+                    </el-tag>
+                    <span class="sensitivity-badge">{{ getSensitivityLabel(selectedPlan.temperature_sensitivity) }}物资</span>
+                  </div>
+                  <p class="strategy-detail">{{ getStrategyDesc(selectedPlan.temperature_sensitivity) }}</p>
+                  <div class="strategy-weights">
+                    <h5>动态权重分配</h5>
+                    <div class="weights-grid">
+                      <div class="weight-item">
+                        <span class="weight-label">时效权重</span>
+                        <div class="weight-bar">
+                          <div class="weight-fill time" :style="{ width: getWeightPercent(selectedPlan.temperature_sensitivity, 'time') + '%' }"></div>
+                        </div>
+                        <span class="weight-value">{{ getWeightPercent(selectedPlan.temperature_sensitivity, 'time') }}%</span>
+                      </div>
+                      <div class="weight-item">
+                        <span class="weight-label">温控权重</span>
+                        <div class="weight-bar">
+                          <div class="weight-fill temp" :style="{ width: getWeightPercent(selectedPlan.temperature_sensitivity, 'temp') + '%' }"></div>
+                        </div>
+                        <span class="weight-value">{{ getWeightPercent(selectedPlan.temperature_sensitivity, 'temp') }}%</span>
+                      </div>
+                      <div class="weight-item">
+                        <span class="weight-label">安全权重</span>
+                        <div class="weight-bar">
+                          <div class="weight-fill safety" :style="{ width: getWeightPercent(selectedPlan.temperature_sensitivity, 'safety') + '%' }"></div>
+                        </div>
+                        <span class="weight-value">{{ getWeightPercent(selectedPlan.temperature_sensitivity, 'safety') }}%</span>
+                      </div>
+                      <div class="weight-item">
+                        <span class="weight-label">成本权重</span>
+                        <div class="weight-bar">
+                          <div class="weight-fill cost" :style="{ width: getWeightPercent(selectedPlan.temperature_sensitivity, 'cost') + '%' }"></div>
+                        </div>
+                        <span class="weight-value">{{ getWeightPercent(selectedPlan.temperature_sensitivity, 'cost') }}%</span>
+                      </div>
+                      <div class="weight-item">
+                        <span class="weight-label">里程权重</span>
+                        <div class="weight-bar">
+                          <div class="weight-fill distance" :style="{ width: getWeightPercent(selectedPlan.temperature_sensitivity, 'distance') + '%' }"></div>
+                        </div>
+                        <span class="weight-value">{{ getWeightPercent(selectedPlan.temperature_sensitivity, 'distance') }}%</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -337,6 +404,7 @@ const form = reactive({
   cargo_type: '冷藏生鲜',
   temperature_sensitivity: 'medium',
   cargo_weight_kg: 5000,
+  multi_drop_points: [] as any[],
 })
 
 const planning = ref(false)
@@ -347,6 +415,7 @@ const cities = ref<any[]>([])
 const cargoTypes = ref<any[]>([])
 const sensitivityLevels = ref<any[]>([])
 const transportModes = ref<any[]>([])
+const transportModeHint = ref('')
 
 let map: any = null
 
@@ -391,6 +460,42 @@ function getRiskClass(score: number) {
   return 'high'
 }
 
+function getStrategyLabel(level: string) {
+  const map: Record<string, string> = {
+    high: '时效优先策略',
+    medium: '温控优先时效均衡策略',
+    low: '成本最优全局均衡策略',
+  }
+  return map[level] || '综合均衡策略'
+}
+
+function getStrategyType(level: string) {
+  const map: Record<string, string> = {
+    high: 'danger',
+    medium: 'warning',
+    low: 'success',
+  }
+  return map[level] || 'info'
+}
+
+function getStrategyDesc(level: string) {
+  const map: Record<string, string> = {
+    high: '疫苗、生物制剂等高敏货物，配送时效设为最高优先级，优先筛选里程最短、通行效率最高、中转节点最少的路线',
+    medium: '生鲜、海鲜等中敏货物，以环境温度适配为核心，动态规避高温城区与拥堵路段，优先选择夜间通行路线',
+    low: '冷冻食品等低敏货物，在满足基础温控标准前提下，重点优化油价能耗与通行成本，合并同方向订单提升满载率',
+  }
+  return map[level] || '根据货物特性动态调整各目标权重，实现场景自适应优化'
+}
+
+function getWeightPercent(level: string, type: string) {
+  const weights: Record<string, Record<string, number>> = {
+    high: { time: 55, temp: 5, safety: 30, cost: 5, distance: 5 },
+    medium: { time: 30, temp: 35, safety: 20, cost: 10, distance: 5 },
+    low: { time: 20, temp: 15, safety: 25, cost: 30, distance: 10 },
+  }
+  return weights[level]?.[type] || 20
+}
+
 function initMap() {
   if (map) return
   map = L.map('route-map').setView([35.5, 110], 4)
@@ -402,38 +507,150 @@ function initMap() {
   setTimeout(() => map?.invalidateSize(), 200)
 }
 
-function drawRouteOnMap(plans: any[]) {
+async function fetchRoadPath(startLat: number, startLng: number, endLat: number, endLng: number): Promise<number[][]> {
+  try {
+    const response = await fetch(`/api/v1/routes/road-path?from_lat=${startLat}&from_lng=${startLng}&to_lat=${endLat}&to_lng=${endLng}`)
+    const data = await response.json()
+    
+    if (data.success && data.coords && data.coords.length > 1) {
+      return data.coords
+    }
+  } catch (error) {
+    console.warn('Road path fetch failed, using straight line:', error)
+  }
+  return [[startLat, startLng], [endLat, endLng]]
+}
+
+async function drawRouteOnMap(plans: any[]) {
   if (!map) return
   map.eachLayer((layer: any) => {
-    if (layer instanceof L.Polyline || layer instanceof L.Marker) map.removeLayer(layer)
+    if (layer.options && typeof layer.options === 'object') {
+      const hasColor = layer.options.color !== undefined
+      const hasFillColor = layer.options.fillColor !== undefined
+      const hasRadius = layer.options.radius !== undefined
+      const hasWeight = layer.options.weight !== undefined
+      
+      if (hasColor || hasFillColor || hasRadius || hasWeight) {
+        map.removeLayer(layer)
+      }
+    }
   })
 
   const colors = ['#00a8ff', '#f59e0b', '#7c3aed']
-  plans.forEach((plan: any, i: number) => {
+  
+  for (let i = 0; i < plans.length; i++) {
+    const plan = plans[i]
     const coords = plan.nodes.map((n: any) => [n.lat, n.lng])
-    L.polyline(coords as any, {
+    
+    let roadCoords: number[][] = []
+    
+    for (let j = 0; j < coords.length - 1; j++) {
+      const [startLat, startLng] = coords[j]
+      const [endLat, endLng] = coords[j + 1]
+      const segmentCoords = await fetchRoadPath(startLat, startLng, endLat, endLng)
+      roadCoords = roadCoords.concat(j === 0 ? segmentCoords : segmentCoords.slice(1))
+    }
+    
+    L.polyline(roadCoords as any, {
       color: colors[i % colors.length],
       weight: plan.recommended ? 5 : 3,
       opacity: plan.recommended ? 1 : 0.6,
       dashArray: plan.recommended ? '' : '8 4',
+      smoothFactor: 1,
     }).addTo(map)
     
-    coords.forEach((coord: any, idx: number) => {
-      const color = idx === 0 ? '#00a8ff' : idx === coords.length - 1 ? '#ef4444' : '#f59e0b'
-      L.circleMarker(coord as any, {
-        radius: plan.recommended ? 8 : 6,
-        color: '#fff',
-        fillColor: color,
-        fillOpacity: 1,
-        weight: 2,
-      }).addTo(map)
-    })
-  })
+    if (plan.recommended) {
+      coords.forEach((coord: any, idx: number) => {
+        const color = idx === 0 ? '#00a8ff' : idx === coords.length - 1 ? '#ef4444' : '#f59e0b'
+        L.circleMarker(coord as any, {
+          radius: 8,
+          color: '#fff',
+          fillColor: color,
+          fillOpacity: 1,
+          weight: 2,
+        }).addTo(map)
+      })
+    }
+  }
 
   const allCoords = plans.flatMap((plan: any) => plan.nodes.map((n: any) => [n.lat, n.lng]))
   if (allCoords.length > 0) {
     map.fitBounds(L.latLngBounds(allCoords as any), { padding: [40, 40] })
   }
+}
+
+const CARGO_TYPE_SENSITIVITY_MAP: Record<string, string> = {
+  '疫苗医药': 'high',
+  '生物试剂': 'high',
+  '医用试剂': 'high',
+  '冷藏生鲜': 'medium',
+  '鲜肉': 'medium',
+  '海鲜': 'medium',
+  '高端鲜果': 'medium',
+  '冷冻食品': 'low',
+  '冷冻肉类': 'low',
+  '速冻食品': 'low',
+  '巧克力': 'medium',
+  '乳制品': 'medium',
+  '饮料': 'medium',
+  '其他': 'medium',
+}
+
+function getSensitivityFromCargo(cargoType: string) {
+  return CARGO_TYPE_SENSITIVITY_MAP[cargoType] || 'medium'
+}
+
+function autoCalculateTransportMode() {
+  const weight = form.cargo_weight_kg || 0
+  const sensitivity = getSensitivityFromCargo(form.cargo_type)
+  form.temperature_sensitivity = sensitivity
+  
+  if (sensitivity === 'high') {
+    form.transport_mode = 'direct'
+    transportModeHint.value = '高敏物资自动推荐：整车直达模式，确保运输时效与温控安全'
+  } else if (weight >= 15000) {
+    form.transport_mode = 'direct'
+    transportModeHint.value = '大批量货物自动推荐：整车直达模式，减少中转损耗'
+  } else if (weight >= 3000) {
+    form.transport_mode = 'hub_distribution'
+    transportModeHint.value = '中等批量自动推荐：零担干支分拨模式，多级节点配送'
+  } else {
+    form.transport_mode = 'multi_drop'
+    transportModeHint.value = '小批量多站点自动推荐：多点沿途卸货模式，优化停靠顺序'
+  }
+}
+
+function onCargoTypeChange() {
+  autoCalculateTransportMode()
+}
+
+function onTransportModeChange(mode: string) {
+  const hints: Record<string, string> = {
+    direct: '整车直达模式：一单一车、全程不换车、不开箱，适合大批量高价值冷链货物',
+    hub_distribution: '零担干支分拨模式：产地→省级枢纽→地市分拨→末端网点，适合小批量多批次订单',
+    multi_drop: '多点沿途卸货模式：智能排序最优停靠顺序，适合连锁商超、生鲜门店多站点配送',
+  }
+  transportModeHint.value = hints[mode] || ''
+  
+  if (mode === 'multi_drop' && form.multi_drop_points.length === 0) {
+    addDropPoint()
+  }
+}
+
+function addDropPoint() {
+  if (form.multi_drop_points.length >= 8) {
+    ElMessage.warning('最多支持8个沿途卸货点')
+    return
+  }
+  form.multi_drop_points.push({
+    city: '',
+    name: '',
+    stop_duration_min: 15,
+  })
+}
+
+function removeDropPoint(idx: number) {
+  form.multi_drop_points.splice(idx, 1)
 }
 
 async function doPlan() {
@@ -442,12 +659,14 @@ async function doPlan() {
     return
   }
 
+  autoCalculateTransportMode()
+  
   planning.value = true
   try {
     const res: any = await routeAPI.plan(form)
     planComparison.value = res.comparison
     await nextTick()
-    drawRouteOnMap(res.comparison.plans)
+    await drawRouteOnMap(res.comparison.plans)
   } catch (e) {
     console.error(e)
     ElMessage.error('路线规划失败')
@@ -522,6 +741,25 @@ onMounted(async () => {
 .form-group { margin-bottom: 14px; }
 .form-group label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
 
+.auto-result-card { background: var(--bg-elevated); border-radius: 8px; padding: 12px; }
+.result-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.result-row:last-child { border-bottom: none; }
+.result-label { font-size: 12px; color: var(--text-muted); }
+
+.mode-hint { font-size: 11px; color: var(--text-muted); margin: 6px 0 0; line-height: 1.4; }
+
+.multi-drop-section { margin-bottom: 18px; }
+.drop-points-list { display: flex; flex-direction: column; gap: 8px; }
+.drop-point-item { display: flex; align-items: center; gap: 6px; }
+.point-index { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.btn-remove { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+.btn-remove:hover { background: rgba(239,68,68,0.1); color: #ef4444; border-color: #ef4444; }
+.btn-add-drop { padding: 8px 12px; font-size: 12px; border-radius: 4px; border: 1px dashed var(--border); background: var(--bg-elevated); cursor: pointer; color: var(--accent); margin-top: 4px; }
+.btn-add-drop:hover { border-style: solid; background: rgba(0,168,255,0.05); }
+
+.strategy-info { display: flex; flex-direction: column; gap: 6px; }
+.strategy-desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; margin: 0; }
+
 .sensitivity-options { display: flex; flex-direction: column; gap: 8px; }
 .sensitivity-radio { display: flex; align-items: stretch; cursor: pointer; }
 .sensitivity-radio input { display: none; }
@@ -594,6 +832,24 @@ onMounted(async () => {
 .overview-item { text-align: center; padding: 12px; border-radius: 8px; background: var(--bg-elevated); }
 .ov-value { font-size: 18px; font-weight: 700; color: var(--accent); font-family: var(--font-display); }
 .ov-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+.strategy-section h4 { font-size: 13px; font-weight: 600; color: var(--text-title); margin-bottom: 12px; }
+.strategy-card { padding: 14px; border-radius: 8px; background: var(--bg-elevated); }
+.strategy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.sensitivity-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: rgba(0,0,0,0.04); color: var(--text-secondary); }
+.strategy-detail { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin: 0 0 12px; }
+.strategy-weights h5 { font-size: 12px; font-weight: 600; margin-bottom: 10px; }
+.weights-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+.weight-item { display: flex; flex-direction: column; gap: 4px; }
+.weight-label { font-size: 11px; color: var(--text-muted); text-align: center; }
+.weight-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.weight-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.weight-fill.time { background: linear-gradient(90deg, #ef4444, #f97316); }
+.weight-fill.temp { background: linear-gradient(90deg, #3b82f6, #06b6d4); }
+.weight-fill.safety { background: linear-gradient(90deg, #10b981, #84cc16); }
+.weight-fill.cost { background: linear-gradient(90deg, #8b5cf6, #a855f7); }
+.weight-fill.distance { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.weight-value { font-size: 11px; font-weight: 600; text-align: center; font-family: var(--font-mono); }
 
 .nodes-section h4 { font-size: 13px; font-weight: 600; color: var(--text-title); margin-bottom: 12px; }
 .nodes-chain { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--bg-elevated); border-radius: 8px; }

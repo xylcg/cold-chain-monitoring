@@ -6,6 +6,7 @@
 """
 import random
 import math
+import requests
 from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -266,3 +267,82 @@ def _distance_to(lat1: float, lng1: float, coord: tuple) -> float:
     dlng = math.radians(coord[1] - lng1)
     a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(coord[0])) * math.sin(dlng / 2) ** 2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+@router.get("/road-path")
+async def get_road_path(
+    from_lat: float = Query(..., description="起点纬度"),
+    from_lng: float = Query(..., description="起点经度"),
+    to_lat: float = Query(..., description="终点纬度"),
+    to_lng: float = Query(..., description="终点经度"),
+):
+    """
+    获取真实道路路径坐标（通过OSRM路由API）
+    前端调用此接口获取城市间真实道路坐标，避免CORS限制
+    """
+    try:
+        url = f"http://router.project-osrm.org/route/v1/driving/{from_lng},{from_lat};{to_lng},{to_lat}?overview=full&steps=true"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get("routes") and len(data["routes"]) > 0:
+            polyline = data["routes"][0].get("geometry", "")
+            decoded_coords = _decode_polyline(polyline)
+            return {
+                "success": True,
+                "coords": decoded_coords,
+                "distance_m": data["routes"][0].get("distance", 0),
+                "duration_s": data["routes"][0].get("duration", 0),
+            }
+        else:
+            return {
+                "success": False,
+                "coords": [[from_lat, from_lng], [to_lat, to_lng]],
+                "error": "No routes found",
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "coords": [[from_lat, from_lng], [to_lat, to_lng]],
+            "error": str(e),
+        }
+
+
+def _decode_polyline(encoded: str) -> List[List[float]]:
+    """解码OSRM返回的polyline编码"""
+    points: List[List[float]] = []
+    index = 0
+    lat = 0
+    lng = 0
+    
+    while index < len(encoded):
+        b = 0
+        shift = 0
+        result = 0
+        while True:
+            b = ord(encoded[index]) - 63
+            index += 1
+            result |= (b & 0x1f) << shift
+            shift += 5
+            if b < 0x20:
+                break
+        
+        lat += ~(result >> 1) if (result & 1) else (result >> 1)
+        
+        b = 0
+        shift = 0
+        result = 0
+        while True:
+            b = ord(encoded[index]) - 63
+            index += 1
+            result |= (b & 0x1f) << shift
+            shift += 5
+            if b < 0x20:
+                break
+        
+        lng += ~(result >> 1) if (result & 1) else (result >> 1)
+        
+        points.append([lat / 1e5, lng / 1e5])
+    
+    return points

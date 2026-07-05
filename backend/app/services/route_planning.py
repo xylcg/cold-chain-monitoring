@@ -17,37 +17,52 @@ TEMP_SENSITIVITY_CONFIG = {
         "name": "高敏物资",
         "description": "疫苗、生物制剂、医用试剂",
         "temp_range": (-20, 10),
-        "safety_weight": 1.0,
-        "time_weight": 0.45,
-        "cost_weight": 0.10,
-        "distance_weight": 0.10,
+        "priority_strategy": "时效优先",
+        "strategy_desc": "最短时效策略：配送时效设为最高优先级，优先筛选行驶里程最短、通行效率最高、中转节点最少的运输路线",
+        "safety_weight": 0.10,
+        "time_weight": 0.55,
+        "cost_weight": 0.05,
+        "distance_weight": 0.05,
+        "temp_weight": 0.25,
         "max_stops": 1,
         "avoid_high_temp": True,
         "avoid_congestion": True,
+        "avoid_remote": True,
+        "max_delay_h": 1.0,
     },
     TemperatureSensitivity.MEDIUM: {
         "name": "中敏物资",
         "description": "鲜肉、海鲜、高端鲜果",
         "temp_range": (-15, 8),
-        "safety_weight": 0.8,
-        "time_weight": 0.35,
-        "cost_weight": 0.20,
-        "distance_weight": 0.15,
+        "priority_strategy": "温控优先",
+        "strategy_desc": "温控优先时效均衡策略：以环境温度适配为核心规划依据，动态规避日间高温城区与闷热拥堵路段，优先选择夜间通行、高速通风路线",
+        "safety_weight": 0.20,
+        "time_weight": 0.20,
+        "cost_weight": 0.15,
+        "distance_weight": 0.10,
+        "temp_weight": 0.35,
         "max_stops": 3,
         "avoid_high_temp": True,
-        "avoid_congestion": False,
+        "avoid_congestion": True,
+        "avoid_remote": False,
+        "max_delay_h": 2.0,
     },
     TemperatureSensitivity.LOW: {
         "name": "低敏物资",
         "description": "冷冻肉类、速冻食品",
         "temp_range": (-25, -10),
-        "safety_weight": 0.6,
-        "time_weight": 0.25,
-        "cost_weight": 0.35,
-        "distance_weight": 0.25,
+        "priority_strategy": "成本最优",
+        "strategy_desc": "成本最优全局均衡策略：在满足基础冷链温控标准的前提下，重点倾斜油价能耗与通行成本优化，合并同方向配送订单提升满载率",
+        "safety_weight": 0.15,
+        "time_weight": 0.15,
+        "cost_weight": 0.40,
+        "distance_weight": 0.15,
+        "temp_weight": 0.15,
         "max_stops": 5,
         "avoid_high_temp": False,
         "avoid_congestion": False,
+        "avoid_remote": False,
+        "max_delay_h": 4.0,
     },
 }
 
@@ -76,7 +91,10 @@ def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     dlat = math.radians(lat2 - lat1)
     dlng = math.radians(lng2 - lng1)
     a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    straight_distance = R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    
+    road_factor = 1.3
+    return round(straight_distance * road_factor, 1)
 
 
 def simulate_cnn_lstm_prediction(from_city: str, to_city: str, hour_of_day: int, sensitivity: TemperatureSensitivity) -> Dict[str, float]:
@@ -109,7 +127,7 @@ def simulate_cnn_lstm_prediction(from_city: str, to_city: str, hour_of_day: int,
     }
 
 
-def generate_route_nodes(origin: str, destination: str, mode: TransportMode, sensitivity: TemperatureSensitivity) -> List[RouteNode]:
+def generate_route_nodes(origin: str, destination: str, mode: TransportMode, sensitivity: TemperatureSensitivity, multi_drop_points: List[Dict[str, Any]] = None) -> List[RouteNode]:
     nodes = []
     node_idx = 0
     
@@ -117,6 +135,10 @@ def generate_route_nodes(origin: str, destination: str, mode: TransportMode, sen
     d_coord = CITY_COORDS.get(destination, (31.2, 121.5))
     
     config = TEMP_SENSITIVITY_CONFIG[sensitivity]
+    
+    HIGH_TEMP_CITIES = ["广州", "深圳", "南宁", "海口", "三亚", "福州", "厦门"]
+    HIGH_CONGESTION_CITIES = ["北京", "上海", "广州", "深圳", "成都", "重庆"]
+    HIGHWAY_CITIES = ["石家庄", "郑州", "武汉", "合肥", "南京", "济南", "西安"]
     
     if mode == TransportMode.DIRECT:
         nodes.append(RouteNode(
@@ -148,19 +170,32 @@ def generate_route_nodes(origin: str, destination: str, mode: TransportMode, sen
         mid_lng = (o_coord[1] + d_coord[1]) / 2
         
         hub_candidates = [h for h in PROVINCIAL_HUBS if h != origin and h != destination]
-        if hub_candidates:
+        
+        if sensitivity == TemperatureSensitivity.HIGH:
+            hub_candidates = [h for h in hub_candidates if h not in HIGH_TEMP_CITIES]
+            if not hub_candidates:
+                hub_candidates = PROVINCIAL_HUBS[:]
+            hub_candidates.sort(key=lambda h: haversine(o_coord[0], o_coord[1], CITY_COORDS.get(h, (0, 0))[0], CITY_COORDS.get(h, (0, 0))[1]))
+        elif sensitivity == TemperatureSensitivity.LOW:
+            hub_candidates = [h for h in hub_candidates if h not in HIGH_CONGESTION_CITIES]
             hub_candidates.sort(key=lambda h: haversine(mid_lat, mid_lng, CITY_COORDS.get(h, (0, 0))[0], CITY_COORDS.get(h, (0, 0))[1]))
-            hub = hub_candidates[0]
         else:
-            hub = "武汉"
+            hub_candidates.sort(key=lambda h: haversine(mid_lat, mid_lng, CITY_COORDS.get(h, (0, 0))[0], CITY_COORDS.get(h, (0, 0))[1]))
+        
+        hub = hub_candidates[0] if hub_candidates else "武汉"
         hub_coord = CITY_COORDS.get(hub, (30.6, 114.3))
         
         dist_candidates = [d for d in REGIONAL_DISTRIBUTION if d != origin and d != destination and d != hub]
-        if dist_candidates:
-            dist_candidates.sort(key=lambda d: haversine(mid_lat, mid_lng, CITY_COORDS.get(d, (0, 0))[0], CITY_COORDS.get(d, (0, 0))[1]))
-            dist_city = dist_candidates[0]
+        
+        if sensitivity == TemperatureSensitivity.HIGH:
+            dist_candidates = [d for d in dist_candidates if d not in HIGH_TEMP_CITIES]
+            dist_candidates.sort(key=lambda d: haversine(hub_coord[0], hub_coord[1], CITY_COORDS.get(d, (0, 0))[0], CITY_COORDS.get(d, (0, 0))[1]))
+        elif sensitivity == TemperatureSensitivity.LOW:
+            dist_candidates.sort(key=lambda d: haversine(hub_coord[0], hub_coord[1], CITY_COORDS.get(d, (0, 0))[0], CITY_COORDS.get(d, (0, 0))[1]))
         else:
-            dist_city = destination
+            dist_candidates.sort(key=lambda d: haversine(hub_coord[0], hub_coord[1], CITY_COORDS.get(d, (0, 0))[0], CITY_COORDS.get(d, (0, 0))[1]))
+        
+        dist_city = dist_candidates[0] if dist_candidates else destination
         dist_coord = CITY_COORDS.get(dist_city, d_coord)
         
         nodes.append(RouteNode(
@@ -225,26 +260,57 @@ def generate_route_nodes(origin: str, destination: str, mode: TransportMode, sen
         ))
         node_idx += 1
         
-        drop_cities = []
-        all_cities = [c for c in CITY_COORDS.keys() if c != origin and c != destination]
-        num_drops = min(config["max_stops"], len(all_cities))
-        
-        for i in range(num_drops):
-            drop_city = random.choice([c for c in all_cities if c not in drop_cities])
-            drop_coord = CITY_COORDS.get(drop_city, (30.0, 115.0))
-            drop_cities.append(drop_city)
+        if multi_drop_points:
+            for i, point in enumerate(multi_drop_points):
+                drop_city = point.get("city", "")
+                if not drop_city or drop_city not in CITY_COORDS:
+                    continue
+                drop_coord = CITY_COORDS.get(drop_city, (30.0, 115.0))
+                point_name = point.get("name", f"{drop_city}门店{i+1}")
+                stop_duration = point.get("stop_duration_min", 15)
+                
+                nodes.append(RouteNode(
+                    node_id=f"NODE-{node_idx:03d}",
+                    name=point_name,
+                    city=drop_city,
+                    level=NodeLevel.END_NODE,
+                    lat=drop_coord[0],
+                    lng=drop_coord[1],
+                    type="store",
+                    stop_duration_min=stop_duration,
+                ))
+                node_idx += 1
+        else:
+            drop_cities = []
+            all_cities = [c for c in CITY_COORDS.keys() if c != origin and c != destination]
             
-            nodes.append(RouteNode(
-                node_id=f"NODE-{node_idx:03d}",
-                name=f"{drop_city}门店{i+1}",
-                city=drop_city,
-                level=NodeLevel.END_NODE,
-                lat=drop_coord[0],
-                lng=drop_coord[1],
-                type="store",
-                stop_duration_min=15,
-            ))
-            node_idx += 1
+            if sensitivity == TemperatureSensitivity.HIGH:
+                all_cities = [c for c in all_cities if c not in HIGH_TEMP_CITIES]
+                all_cities.sort(key=lambda c: haversine(o_coord[0], o_coord[1], CITY_COORDS.get(c, (0, 0))[0], CITY_COORDS.get(c, (0, 0))[1]))
+            elif sensitivity == TemperatureSensitivity.LOW:
+                all_cities = [c for c in all_cities if c not in HIGH_CONGESTION_CITIES]
+                all_cities.sort(key=lambda c: haversine(o_coord[0], o_coord[1], CITY_COORDS.get(c, (0, 0))[0], CITY_COORDS.get(c, (0, 0))[1]))
+            else:
+                all_cities = [c for c in all_cities if c not in HIGH_TEMP_CITIES]
+                all_cities.sort(key=lambda c: haversine(o_coord[0], o_coord[1], CITY_COORDS.get(c, (0, 0))[0], CITY_COORDS.get(c, (0, 0))[1]))
+            
+            num_drops = min(config["max_stops"], len(all_cities))
+            
+            drop_cities = all_cities[:num_drops]
+            
+            for i, drop_city in enumerate(drop_cities):
+                drop_coord = CITY_COORDS.get(drop_city, (30.0, 115.0))
+                nodes.append(RouteNode(
+                    node_id=f"NODE-{node_idx:03d}",
+                    name=f"{drop_city}门店{i+1}",
+                    city=drop_city,
+                    level=NodeLevel.END_NODE,
+                    lat=drop_coord[0],
+                    lng=drop_coord[1],
+                    type="store",
+                    stop_duration_min=15,
+                ))
+                node_idx += 1
         
         nodes.append(RouteNode(
             node_id=f"NODE-{node_idx:03d}",
@@ -351,14 +417,20 @@ def compute_multi_objective_score(plan: RoutePlanResponse, sensitivity: Temperat
     cost_norm = 1 - (plan.estimated_total_cost_yuan / max_cost)
     risk_norm = 1 - (plan.overall_risk_score / 100)
     
-    safety_score = risk_norm * 0.5 + (1 - plan.risk_report.get("avg_heat_risk", 0)) * 0.5
+    avg_heat_risk = plan.risk_report.get("avg_heat_risk", 0)
+    temp_score = 1 - avg_heat_risk
+    
+    safety_score = risk_norm * 0.5 + temp_score * 0.5
+    
+    total_weight = config["safety_weight"] + config["time_weight"] + config["cost_weight"] + config["distance_weight"] + config["temp_weight"]
     
     composite = (
         safety_score * config["safety_weight"] * 100 +
         duration_norm * config["time_weight"] * 100 +
         cost_norm * config["cost_weight"] * 100 +
-        distance_norm * config["distance_weight"] * 100
-    )
+        distance_norm * config["distance_weight"] * 100 +
+        temp_score * config["temp_weight"] * 100
+    ) / total_weight
     
     return round(composite, 1)
 
@@ -404,7 +476,7 @@ def plan_route(request: RoutePlanRequest) -> RoutePlanResponse:
     sensitivity = CARGO_TYPE_MAP.get(request.cargo_type, request.temperature_sensitivity)
     config = TEMP_SENSITIVITY_CONFIG[sensitivity]
     
-    nodes = generate_route_nodes(request.origin, request.destination, request.transport_mode, sensitivity)
+    nodes = generate_route_nodes(request.origin, request.destination, request.transport_mode, sensitivity, request.multi_drop_points)
     
     segments = []
     total_distance = 0
@@ -543,9 +615,11 @@ def plan_route(request: RoutePlanRequest) -> RoutePlanResponse:
 def generate_comparison_plans(request: RoutePlanRequest) -> RoutePlanComparison:
     plans = []
     
-    modes = [TransportMode.DIRECT, TransportMode.HUB_DISTRIBUTION]
-    if request.transport_mode == TransportMode.MULTI_DROP:
-        modes.append(TransportMode.MULTI_DROP)
+    sensitivity = CARGO_TYPE_MAP.get(request.cargo_type, request.temperature_sensitivity)
+    config = TEMP_SENSITIVITY_CONFIG[sensitivity]
+    strategy = config["priority_strategy"]
+    
+    modes = [request.transport_mode]
     
     for mode in modes:
         req_copy = RoutePlanRequest(**request.dict())
@@ -553,8 +627,15 @@ def generate_comparison_plans(request: RoutePlanRequest) -> RoutePlanComparison:
         plan = plan_route(req_copy)
         plans.append(plan)
     
-    plans.sort(key=lambda x: -x.composite_score)
-    plans[0].recommended = True
+    if strategy == "时效优先":
+        plans.sort(key=lambda x: x.estimated_total_duration_h)
+    elif strategy == "温控优先":
+        plans.sort(key=lambda x: -x.risk_report["overall_risk_score"])
+    else:
+        plans.sort(key=lambda x: x.estimated_total_cost_yuan)
+    
+    for p in plans:
+        p.recommended = True
     
     comparison_metrics = {
         "avg_distance_km": round(sum(p.estimated_total_distance_km for p in plans) / len(plans), 1),

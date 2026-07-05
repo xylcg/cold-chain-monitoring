@@ -2,7 +2,7 @@
 客户温控查询服务 API
 使用统一世界状态，确保运单数据与车辆数据联通
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -32,6 +32,53 @@ class CustomerOrderCreate(BaseModel):
 # pending(待接单) -> accepted(司机已接单) -> in_transit(配送中) -> delivered(已送达待确认) -> completed(客户已签收)
 # 内存存储顾客订单
 _customer_orders: dict = {}  # order_id -> 订单数据
+
+
+def _init_mock_orders():
+    """初始化模拟订单数据（从世界状态同步）"""
+    if _customer_orders:
+        return
+    ws = get_world_state()
+    cargo_categories = ["冷冻食品", "冷藏生鲜", "疫苗医药", "化工制剂", "其他"]
+    statuses = ["pending", "accepted", "in_transit", "delivered", "completed"]
+    review_statuses = [None, None, None, "approved", "approved", "rejected"]
+    
+    vehicles = ws.get("vehicles", [])
+    if isinstance(vehicles, dict):
+        vehicles = list(vehicles.values())
+    
+    for idx, vehicle in enumerate(vehicles):
+        if idx >= 20:
+            break
+        order_id = f"ORD-{idx+1:04d}"
+        status = statuses[idx % len(statuses)]
+        _customer_orders[order_id] = {
+            "order_id": order_id,
+            "cargo_name": vehicle.get("cargo_type", "生鲜货物"),
+            "cargo_category": cargo_categories[idx % len(cargo_categories)],
+            "origin": vehicle.get("current_city", "北京"),
+            "destination": vehicle.get("route", ["北京", "上海"])[-1] if isinstance(vehicle.get("route"), list) else "上海",
+            "quantity": round(vehicle.get("cargo_weight", 1000) / 1000, 2),
+            "unit": "kg",
+            "temperature_requirement": vehicle.get("temp_range", "-18℃ ~ -15℃"),
+            "zone_name": vehicle.get("cargo_zone", "冷冻区"),
+            "receiver": f"收货人{idx+1}",
+            "receiver_phone": f"138001380{idx+1:02d}",
+            "status": status,
+            "review_status": review_statuses[idx % len(review_statuses)] if status in ["accepted", "delivered", "completed"] else None,
+            "review_notes": "" if status in ["pending", "in_transit"] else ("审核通过" if idx % 3 != 0 else "驳回：货物不符"),
+            "reviewed_by": "warehouse01" if status in ["delivered", "completed"] else "",
+            "price": round(vehicle.get("cargo_weight", 1000) * 0.0035 + 200, 0),
+            "weight_kg": vehicle.get("cargo_weight", 1000),
+            "driver_id": vehicle.get("driver_id", ""),
+            "driver_name": vehicle.get("driver_name", ""),
+            "vehicle_id": vehicle.get("device_id", ""),
+            "created_at": (datetime.utcnow() - timedelta(hours=idx * 2)).isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+
+
+_init_mock_orders()
 
 
 @router.get("/query/{waybill_id}")
