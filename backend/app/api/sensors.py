@@ -9,6 +9,7 @@ from typing import List
 from loguru import logger
 
 from ..schemas import SensorData, SensorDataBatch
+from ..core.security import get_current_user, require_role
 from ..services.kafka_service import kafka_service
 from ..services.tdengine_service import tdengine_service
 from ..services.redis_service import redis_service
@@ -104,7 +105,7 @@ async def receive_sensor_data_batch(
 
 
 @router.get("/latest/{device_id}")
-async def get_latest_data(device_id: str):
+async def get_latest_data(device_id: str, user: dict = Depends(require_role("admin", "warehouse"))):
     """获取设备最新传感器数据"""
     data = await redis_service.get_latest_sensor_data(device_id)
     if not data:
@@ -118,6 +119,7 @@ async def get_history(
     start: str,
     end: str,
     limit: int = 100,
+    user: dict = Depends(require_role("admin", "warehouse")),
 ):
     """查询设备历史数据"""
     data = tdengine_service.query_history(device_id, start, end, limit)

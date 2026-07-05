@@ -70,6 +70,8 @@ export const alertAPI = {
   getRules: () => api.get('/alerts/rules'),
   createRule: (rule: any) => api.post('/alerts/rules', rule),
   deleteRule: (ruleType: string) => api.delete(`/alerts/rules/${ruleType}`),
+  // 🔴 P0: 司机专属告警
+  getDriverAlerts: (params?: any) => api.get('/alerts/driver', { params }),
 }
 
 export const geofenceAPI = {
@@ -125,6 +127,16 @@ export const customerAPI = {
   // P0: 品质反馈
   submitQualityFeedback: (orderId: string, data: any) => api.post(`/customer/quality-feedback/${orderId}`, data),
   getQualityFeedback: (orderId: string) => api.get(`/customer/quality-feedback/${orderId}`),
+  // 管理员/仓库经理：统一订单管理
+  getAllOrders: () => api.get('/customer/all-orders'),
+  adminAssignDriver: (orderId: string, data: any) => api.post(`/customer/admin-assign-driver/${orderId}`, data),
+  // 🔴 P0: 订单-运单关联查询
+  getOrderWaybill: (orderId: string) => api.get(`/customer/order-waybill/${orderId}`),
+  // 仓库订单审核
+  getPendingReviewOrders: () => api.get('/customer/pending-review-orders'),
+  getAllReviewOrders: (status?: string) => api.get('/customer/all-review-orders', { params: { status } }),
+  reviewOrder: (orderId: string, action: string, notes?: string) =>
+    api.post(`/customer/review-order/${orderId}`, { action, notes: notes || '' }),
 }
 
 export const vehicleAPI = {
@@ -192,6 +204,9 @@ export const uploadAPI = {
   // 司机查询自己照片的审核状态
   getDriverPhotos: (orderId?: string) =>
     api.get('/upload/driver-photos', { params: { order_id: orderId || '' } }),
+  // 🔴 P0: 批量审核
+  batchReview: (recordIds: string[], action: string, notes?: string) =>
+    api.post('/upload/review/batch', { record_ids: recordIds, action, notes: notes || '' }),
 }
 
 export const resourceAPI = {

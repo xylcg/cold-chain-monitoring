@@ -4,9 +4,11 @@ import random
 import base64
 import httpx
 from datetime import datetime
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
+
+from ..core.security import get_current_user, require_role
 
 router = APIRouter(prefix="/api/v1/quality", tags=["品质评估"])
 
@@ -507,7 +509,7 @@ class AssessResponse(BaseModel):
     message: str = ""
 
 @router.post("/assess", response_model=AssessResponse)
-async def assess_quality(request: AssessRequest):
+async def assess_quality(request: AssessRequest, user: dict = Depends(require_role("admin", "warehouse"))):
     try:
         product_key = None
         for key, value in PRODUCT_CATEGORIES.items():
@@ -525,7 +527,8 @@ async def assess_quality(request: AssessRequest):
 
 @router.post("/assess/image", response_model=AssessResponse)
 async def assess_with_image(file: UploadFile = File(...), product_type: str = None, storage_days: int = 0,
-                            storage_condition: str = None, package_status: str = None, transport_mode: str = None):
+                            storage_condition: str = None, package_status: str = None, transport_mode: str = None,
+                            user: dict = Depends(require_role("admin", "warehouse"))):
     try:
         contents = await file.read()
         image_base64 = base64.b64encode(contents).decode("utf-8")
@@ -560,7 +563,7 @@ async def assess_with_image(file: UploadFile = File(...), product_type: str = No
         return {"success": False, "message": str(e)}
 
 @router.get("/demo")
-async def get_demo_assessment(product_key: str):
+async def get_demo_assessment(product_key: str, user: dict = Depends(require_role("admin", "warehouse"))):
     if product_key not in PRODUCT_CATEGORIES:
         return {"success": False, "message": "不支持的产品类型"}
     
@@ -709,11 +712,11 @@ async def get_demo_assessment(product_key: str):
     return {"success": True, "data": result}
 
 @router.get("/categories")
-async def get_categories():
+async def get_categories(user: dict = Depends(get_current_user)):
     return {"success": True, "data": list(SUPPORTED_CATEGORIES)}
 
 @router.get("/products")
-async def get_products(category: str = None):
+async def get_products(category: str = None, user: dict = Depends(get_current_user)):
     products = []
     for key, value in PRODUCT_CATEGORIES.items():
         if category is None or value["category"] == category:
@@ -721,7 +724,7 @@ async def get_products(category: str = None):
     return {"success": True, "data": products}
 
 @router.get("/batches")
-async def get_batches(category: str = None, grade: str = None):
+async def get_batches(category: str = None, grade: str = None, user: dict = Depends(require_role("admin", "warehouse"))):
     import psycopg2
     import json
     
@@ -808,7 +811,7 @@ async def get_batches(category: str = None, grade: str = None):
             conn.close()
 
 @router.get("/stats")
-async def get_stats():
+async def get_stats(user: dict = Depends(require_role("admin", "warehouse"))):
     import psycopg2
     
     conn = None

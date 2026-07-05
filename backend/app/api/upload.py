@@ -5,10 +5,12 @@ import os
 import json
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, UploadFile, File, Form, Query
+from fastapi import APIRouter, UploadFile, File, Form, Query, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from loguru import logger
+
+from ..core.security import get_current_user, require_role
 
 router = APIRouter(prefix="/api/v1/upload", tags=["文件上传"])
 
@@ -63,6 +65,7 @@ async def upload_temperature_record(
     notes: str = Form(default=""),
     latitude: float = Form(default=0),
     longitude: float = Form(default=0),
+    user: dict = Depends(require_role("driver", "admin", "warehouse")),
 ):
     """
     配送人员拍照上传温度记录纸
@@ -114,6 +117,7 @@ async def upload_temperature_record(
         "size_bytes": len(content),
         "content_type": file.content_type,
         "upload_time": datetime.now().isoformat(),
+        "uploaded_by": user.get("sub", "unknown"),
         "url": f"/uploads/{filename}",
         # 审核状态字段
         "review_status": "pending_review",  # pending_review / approved / rejected
@@ -138,6 +142,7 @@ async def list_temperature_records(
     device_id: str = Query(default=""),
     waybill_id: str = Query(default=""),
     limit: int = Query(default=20),
+    user: dict = Depends(require_role("admin", "warehouse", "driver")),
 ):
     """
     查询温度记录纸上传列表
@@ -165,6 +170,7 @@ async def list_temperature_records(
 async def list_pending_reviews(
     review_status: str = Query(default="pending_review"),
     limit: int = Query(default=50),
+    user: dict = Depends(require_role("admin", "warehouse")),
 ):
     """
     仓管/维修查询待审核的拍照记录
@@ -188,7 +194,11 @@ async def list_pending_reviews(
 
 
 @router.post("/review/{record_id}")
-async def review_photo(record_id: str, body: ReviewRequest):
+async def review_photo(
+    record_id: str,
+    body: ReviewRequest,
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
     """
     仓管审核司机上传的拍照记录
     
@@ -228,7 +238,7 @@ async def review_photo(record_id: str, body: ReviewRequest):
     now = datetime.now().isoformat()
     target["review_status"] = "approved" if body.action == "approve" else "rejected"
     target["review_notes"] = body.notes
-    target["reviewed_by"] = "warehouse"
+    target["reviewed_by"] = user.get("sub", "warehouse")
     target["reviewed_at"] = now
     _save_records()
 
@@ -242,8 +252,87 @@ async def review_photo(record_id: str, body: ReviewRequest):
     }
 
 
+# ====== 🔴 P0: 批量审核照片 ======
+class BatchReviewRequest(BaseModel):
+    record_ids: list[str]
+    action: str  # "approve" 或 "reject"
+    notes: str = ""
+
+
+@router.post("/review/batch")
+async def batch_review_photos(
+    body: BatchReviewRequest,
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """
+    批量审核司机上传的拍照记录
+    
+    - **record_ids**: 审核记录 ID 列表
+    - **action**: "approve" 批量通过 / "reject" 批量驳回
+    - **notes**: 审核备注
+    """
+    if body.action not in ("approve", "reject"):
+        return JSONResponse(
+            status_code=400,
+            content={"code": 400, "message": "action 必须是 approve 或 reject"}
+        )
+
+    if body.action == "reject" and not body.notes.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"code": 400, "message": "批量驳回时必须填写审核备注/原因"}
+        )
+
+    if not body.record_ids:
+        return JSONResponse(
+            status_code=400,
+            content={"code": 400, "message": "record_ids 不能为空"}
+        )
+
+    now = datetime.now().isoformat()
+    reviewer = user.get("sub", "warehouse")
+    success = 0
+    skipped = 0
+    not_found = 0
+
+    for rid in body.record_ids:
+        target = None
+        for r in upload_records:
+            if r["id"] == rid:
+                target = r
+                break
+        if not target:
+            not_found += 1
+            continue
+        if target.get("review_status") != "pending_review":
+            skipped += 1
+            continue
+        target["review_status"] = "approved" if body.action == "approve" else "rejected"
+        target["review_notes"] = body.notes
+        target["reviewed_by"] = reviewer
+        target["reviewed_at"] = now
+        success += 1
+
+    _save_records()
+    action_label = "通过" if body.action == "approve" else "驳回"
+    logger.info(f"批量审核{action_label}: 成功{success}, 跳过{skipped}, 未找到{not_found}")
+
+    return {
+        "code": 200,
+        "message": f"批量审核完成: {action_label} {success}条",
+        "data": {
+            "success": success,
+            "skipped": skipped,
+            "not_found": not_found,
+            "total_requested": len(body.record_ids),
+        },
+    }
+
+
 @router.get("/review-stats")
-async def review_stats():
+async def review_stats(
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
     """获取审核统计数据"""
     total = len(upload_records)
     pending = sum(1 for r in upload_records if r.get("review_status") == "pending_review")
@@ -263,7 +352,10 @@ async def review_stats():
 
 
 @router.get("/driver-photos")
-async def get_driver_photos(order_id: str = Query(default="")):
+async def get_driver_photos(
+    order_id: str = Query(default=""),
+    user: dict = Depends(get_current_user),
+):
     """
     司机查询自己订单的拍照审核状态
     

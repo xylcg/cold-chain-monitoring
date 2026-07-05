@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..core.security import get_current_user
+from ..core.security import get_current_user, require_role
 from ..services.redis_service import redis_service
 
 router = APIRouter(prefix="/api/v1/geofence", tags=["电子围栏"])
@@ -122,6 +122,7 @@ async def check_geofence_event(
     lat: float,
     lng: float,
     temperature: float = 0.0,
+    user: dict = Depends(require_role("admin", "warehouse", "driver")),
 ):
     """
     检查设备是否进入/离开电子围栏

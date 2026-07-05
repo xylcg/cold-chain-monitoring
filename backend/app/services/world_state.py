@@ -3,6 +3,9 @@
 所有 API 端点共享同一个数据源，确保数据跨页面联通
 
 模拟场景：30辆车正在全国冷链配送，5个冷库在运转
+支持：
+- 随机波动层：KPI 数字在合理范围内动态变化，模拟真实监控场景
+- Simulator 对接：优先从 Redis 获取真实在线设备数
 """
 import random
 import math
@@ -15,6 +18,33 @@ from typing import Optional
 def _seed():
     seed_val = int(datetime.utcnow().timestamp()) // 30
     random.seed(seed_val)
+
+# ==================== 动态波动层 ====================
+# 模拟真实监控场景中数据的微小波动
+def _live_wave(base_value: float, amplitude_pct: float = 0.03, floor: float = None, ceil: float = None) -> float:
+    """
+    给数值添加微小实时波动
+    - amplitude_pct: 波动幅度百分比（0.03 = ±3%）
+    - 使用当前秒级时间戳作为种子，保证每次调用都不同
+    """
+    ts = int(datetime.utcnow().timestamp())
+    wave = (hash(f"wave_{ts}_{base_value}") % 1000) / 1000.0  # 0~1
+    delta = base_value * amplitude_pct * (wave - 0.5) * 2  # ±amplitude_pct
+    result = base_value + delta
+    if floor is not None:
+        result = max(floor, result)
+    if ceil is not None:
+        result = min(ceil, result)
+    return round(result, 1)
+
+def _live_int_wave(base_value: int, amplitude: int = 2, floor: int = None) -> int:
+    """给整数值添加实时波动"""
+    ts = int(datetime.utcnow().timestamp())
+    delta = (hash(f"int_{ts}_{base_value}") % (amplitude * 2 + 1)) - amplitude
+    result = base_value + delta
+    if floor is not None:
+        result = max(floor, result)
+    return result
 
 # ==================== 城市坐标 ====================
 CITY_COORDS = {
@@ -412,7 +442,7 @@ def get_world_state():
     # 生成品质批次
     quality_batches = _generate_quality_batches()
 
-    # 生成运单数据
+    # 生成运单数据（模拟运输中的车辆运单）
     waybills = {}
     for v in vehicles:
         wb_id = v["waybill_no"]
@@ -437,20 +467,29 @@ def get_world_state():
         waybills[wb_id] = {
             "waybill_id": wb_id,
             "cargo_type": v["cargo_type"],
+            "cargo_name": v["cargo_type"],  # 统一字段
+            "cargo_category": "冷链",
             "temperature_requirement": f"{v['cargo_zone']} ({min(temps):.0f}°C ~ {max(temps):.0f}°C)",
             "origin": origin_city,
             "destination": dest_city,
             "departure_time": datetime.fromtimestamp(now - 24 * 3600).isoformat(),
             "estimated_arrival": datetime.fromtimestamp(now + random.randint(2, 8) * 3600).isoformat(),
             "current_status": "运输中",
+            "status": "in_transit",  # 统一状态机: pending/accepted/in_transit/delivered/completed
             "records": records,
             "current_temperature": temps[-1],
             "avg_temperature": round(sum(temps) / len(temps), 1),
             "temperature_range": f"{min(temps):.1f}°C ~ {max(temps):.1f}°C",
             "is_compliant": all(abs(t - v["target_temperature"]) < 6 for t in temps),
+            "quantity": round(random.uniform(500, 5000), 1),
+            "unit": "kg",
+            "driver_name": f"司机{random.choice(['张','李','王','赵','孙'])}师傅",
+            "driver_id": f"driver0{random.randint(1,5)}",
+            "created_at": datetime.fromtimestamp(now - 24 * 3600).isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
         }
 
-    # KPI 汇总
+    # KPI 汇总（带动态波动层，模拟真实监控场景）】
     online_count = len(vehicles)
     compliant_count = sum(1 for v in vehicles if v["temperature_compliant"])
     critical_count = sum(1 for a in all_alerts if a["severity"] == "critical")
@@ -462,22 +501,57 @@ def get_world_state():
     total_wh_used = sum(wh["total_used"] for wh in warehouse_utils)
     fleet_size = 50  # 总车队规模
 
+    # --- 动态波动：KPI 在合理范围内实时波动 ---
+    base_compliance = round(compliant_count / online_count * 100, 1) if online_count > 0 else 0
+    base_online_rate = round(online_count / 110 * 100, 1)
+    base_wh_util = round(total_wh_used / total_wh_slots * 100, 1) if total_wh_slots > 0 else 0
+    base_fleet_rate = round(online_count / fleet_size * 100, 1)
+
     kpi = {
         "total_devices": 110,
-        "online_devices": online_count,
-        "online_rate": round(online_count / 110 * 100, 1),
-        "temperature_compliance_rate": round(compliant_count / online_count * 100, 1) if online_count > 0 else 0,
-        "active_alerts": len(all_alerts),
-        "critical_alerts": critical_count,
-        "avg_temperature": round(avg_temp, 1),
-        "avg_humidity": round(avg_humidity, 1),
+        "online_devices": _live_int_wave(online_count, amplitude=1, floor=online_count - 2),
+        "online_rate": _live_wave(base_online_rate, amplitude_pct=0.04, floor=1, ceil=100),
+        "temperature_compliance_rate": _live_wave(base_compliance, amplitude_pct=0.03, floor=1, ceil=100),
+        "active_alerts": _live_int_wave(len(all_alerts), amplitude=2, floor=max(0, len(all_alerts) - 3)),
+        "critical_alerts": _live_int_wave(critical_count, amplitude=1, floor=0),
+        "avg_temperature": _live_wave(avg_temp, amplitude_pct=0.08, floor=-30, ceil=45),
+        "avg_humidity": _live_wave(avg_humidity, amplitude_pct=0.05, floor=0, ceil=100),
         "timestamp": datetime.utcnow().isoformat(),
         "data_source": "unified_simulation",
-        # 额外数据
-        "warehouse_utilization": round(total_wh_used / total_wh_slots * 100, 1) if total_wh_slots > 0 else 0,
-        "fleet_online_rate": round(online_count / fleet_size * 100, 1),
-        "total_waybills": len(waybills),
-        "quality_batches": len(quality_batches),
+        # 额外数据（同样带波动）
+        "warehouse_utilization": _live_wave(base_wh_util, amplitude_pct=0.03, floor=1, ceil=100),
+        "fleet_online_rate": _live_wave(base_fleet_rate, amplitude_pct=0.02, floor=1, ceil=100),
+        "total_waybills": _live_int_wave(len(waybills), amplitude=1, floor=1),
+        "quality_batches": _live_int_wave(len(quality_batches), amplitude=1, floor=1),
+        # 设备统计
+        "total_online_devices": online_count,
+        "device_compliant_count": compliant_count,
+        "device_anomaly_count": online_count - compliant_count,
+        # 告警分布
+        "alerts_by_severity": {
+            "critical": sum(1 for a in all_alerts if a["severity"] == "critical"),
+            "severe": sum(1 for a in all_alerts if a["severity"] == "severe"),
+            "normal": sum(1 for a in all_alerts if a["severity"] == "normal"),
+        },
+        # 温度分区统计
+        "zone_stats": {
+            "freeze": round(sum(v["temperature"] for v in vehicles if v["cargo_zone"] == "frozen") / max(1, sum(1 for v in vehicles if v["cargo_zone"] == "frozen")), 1),
+            "refrigerated": round(sum(v["temperature"] for v in vehicles if v["cargo_zone"] == "refrigerated") / max(1, sum(1 for v in vehicles if v["cargo_zone"] == "refrigerated")), 1),
+            "ambient": round(sum(v["temperature"] for v in vehicles if v["cargo_zone"] == "ambient") / max(1, sum(1 for v in vehicles if v["cargo_zone"] == "ambient")), 1),
+        },
+        # 冷库利用分布
+        "warehouse_distribution": [
+            {
+                "id": wh["id"],
+                "name": wh["name"],
+                "city": wh["city"],
+                "utilization": _live_wave(wh["utilization"], amplitude_pct=0.03, floor=0, ceil=100),
+                "frozen_util": _live_wave(wh["frozen_util"], amplitude_pct=0.03, floor=0, ceil=100),
+                "refrigerated_util": _live_wave(wh["refrigerated_util"], amplitude_pct=0.03, floor=0, ceil=100),
+                "ambient_util": _live_wave(wh["ambient_util"], amplitude_pct=0.03, floor=0, ceil=100),
+            }
+            for wh in warehouse_utils
+        ],
     }
 
     _world_cache = {

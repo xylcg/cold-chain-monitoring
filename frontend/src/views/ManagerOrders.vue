@@ -44,11 +44,11 @@
         <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" size="small" @click="viewDetail(row)">详情</el-button>
-            <el-button v-if="row.status==='created'" text type="success" size="small" @click="assignToDriver(row)">分配</el-button>
-            <el-button v-if="row.status==='created'" text type="danger" size="small" @click="cancelOrder(row)">取消</el-button>
-            <el-button v-if="row.status==='assigned'||row.status==='in_transit'" text type="warning" size="small" @click="sendDriverMsg(row)">消息</el-button>
-            <el-button v-if="row.status==='assigned'||row.status==='in_transit'" text type="info" size="small" @click="openTempTrack(row)">🌡</el-button>
-            <el-button v-if="row.status==='assigned'||row.status==='in_transit'" text type="info" size="small" @click="router.push('/tracking')">📍</el-button>
+            <el-button v-if="row.status==='pending'" text type="success" size="small" @click="assignToDriver(row)">分配</el-button>
+            <el-button v-if="row.status==='pending'" text type="danger" size="small" @click="cancelOrder(row)">取消</el-button>
+            <el-button v-if="row.status==='accepted'||row.status==='in_transit'" text type="warning" size="small" @click="sendDriverMsg(row)">消息</el-button>
+            <el-button v-if="row.status==='accepted'||row.status==='in_transit'" text type="info" size="small" @click="openTempTrack(row)">🌡</el-button>
+            <el-button v-if="row.status==='accepted'||row.status==='in_transit'" text type="info" size="small" @click="router.push('/tracking')">📍</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -73,19 +73,20 @@
     </div>
 
     <!-- 新建订单弹窗 -->
-    <el-dialog v-model="showCreateDialog" title="新建冷链运单" width="560px" destroy-on-close>
+    <el-dialog v-model="showCreateDialog" title="新建冷链订单" width="560px" destroy-on-close>
       <el-form :model="createForm" label-width="90px">
-        <el-form-item label="运单号" required><el-input v-model="createForm.waybill_id" /></el-form-item>
         <el-form-item label="货物名称" required><el-input v-model="createForm.cargo_name" placeholder="如 进口车厘子" /></el-form-item>
         <el-form-item label="货物类别"><el-select v-model="createForm.cargo_category" style="width:100%"><el-option v-for="c in cargoTypes" :key="c" :label="c" :value="c" /></el-select></el-form-item>
         <el-row :gutter="16">
           <el-col :span="12"><el-form-item label="数量"><el-input-number v-model="createForm.quantity" :min="0" :max="50000" style="width:100%" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="单位"><el-select v-model="createForm.unit" style="width:100%"><el-option label="kg" value="kg" /><el-option label="吨" value="吨" /><el-option label="箱" value="箱" /></el-select></el-form-item></el-col>
         </el-row>
+        <el-form-item label="温度要求"><el-select v-model="createForm.temperature_requirement" style="width:100%"><el-option label="-25℃ ~ -18℃ (深冻)" value="-25℃ ~ -18℃" /><el-option label="-18℃ ~ -15℃ (冷冻)" value="-18℃ ~ -15℃" /><el-option label="0℃ ~ 4℃ (冷藏)" value="0℃ ~ 4℃" /><el-option label="2℃ ~ 8℃ (冷鲜)" value="2℃ ~ 8℃" /><el-option label="15℃ ~ 25℃ (恒温)" value="15℃ ~ 25℃" /></el-select></el-form-item>
+        <el-form-item label="温区"><el-select v-model="createForm.zone_name" style="width:100%"><el-option label="冷冻区" value="冷冻区" /><el-option label="冷藏区" value="冷藏区" /><el-option label="恒温区" value="恒温区" /></el-select></el-form-item>
         <el-form-item label="出发地"><el-input v-model="createForm.origin" placeholder="如 华北中心冷库" /></el-form-item>
         <el-form-item label="目的地"><el-input v-model="createForm.destination" placeholder="如 北京市朝阳区" /></el-form-item>
-        <el-form-item label="发货方"><el-input v-model="createForm.shipper" /></el-form-item>
         <el-form-item label="收货方"><el-input v-model="createForm.receiver" /></el-form-item>
+        <el-form-item label="收货电话"><el-input v-model="createForm.receiver_phone" /></el-form-item>
         <el-form-item label="备注"><el-input v-model="createForm.notes" type="textarea" :rows="2" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showCreateDialog=false">取消</el-button><el-button type="primary" @click="submitCreate" :loading="creating">确认创建</el-button></template>
@@ -164,7 +165,7 @@ const driverMessages = ref<any[]>([])
 const cargoTypes = ['冷冻食品','冷冻肉类','冷冻海鲜','冷藏生鲜','冷藏鲜奶','水果','蔬菜','疫苗医药','生物试剂','恒温药品','鲜花','其他']
 
 const showCreateDialog = ref(false)
-const createForm = ref({ waybill_id: genWaybillId(), cargo_name: '', cargo_category: '水果', origin: '', destination: '', quantity: 1000, unit: 'kg', shipper: '', receiver: '', notes: '' })
+const createForm = ref({ cargo_name: '', cargo_category: '冷链', origin: '', destination: '', quantity: 1000, unit: 'kg', temperature_requirement: '-18℃ ~ -15℃', zone_name: '冷冻区', receiver: '', receiver_phone: '', notes: '' })
 
 const showAssignDialog = ref(false)
 const assignTarget = ref<any>(null)
@@ -191,8 +192,9 @@ const showReplyDialog = ref(false)
 const replyTarget = ref<any>(null)
 const replyContent = ref('')
 
-const pendingOrders = computed(() => waybills.value.filter(w => w.status === 'created'))
-const transitOrders = computed(() => waybills.value.filter(w => w.status === 'assigned' || w.status === 'in_transit'))
+// 统一状态机: pending(待接单)/accepted(已分配)/in_transit(运输中)/delivered(已送达)/completed(已完成)
+const pendingOrders = computed(() => waybills.value.filter(w => w.status === 'pending'))
+const transitOrders = computed(() => waybills.value.filter(w => w.status === 'accepted' || w.status === 'in_transit'))
 const unreadMessages = computed(() => driverMessages.value.filter(m => !m.read).length)
 
 const displayWaybills = computed(() => {
@@ -211,16 +213,23 @@ const paginatedWaybills = computed(() => {
   return filteredWaybills.value.slice(s, s + pageSize.value)
 })
 
-function genWaybillId() { return `WB${new Date().toISOString().slice(0,10).replace(/-/g,'')}${String(Math.floor(Math.random()*9000)+1000)}` }
-function statusType(s: string): string { const m: Record<string,string> = { created:'info', assigned:'warning', in_transit:'primary', completed:'success', cancelled:'danger' }; return m[s]||'info' }
-function statusLabel(s: string): string { const m: Record<string,string> = { created:'待调度', assigned:'已分配', in_transit:'运输中', completed:'已完成', cancelled:'已取消' }; return m[s]||s }
+// 统一状态机标签
+function statusType(s: string): string { const m: Record<string,string> = { pending:'info', accepted:'warning', in_transit:'primary', delivered:'success', completed:'success', cancelled:'danger' }; return m[s]||'info' }
+function statusLabel(s: string): string { const m: Record<string,string> = { pending:'待接单', accepted:'已分配', in_transit:'运输中', delivered:'已送达', completed:'已完成', cancelled:'已取消' }; return m[s]||s }
 function formatTime(ts: string): string { if(!ts) return '—'; try { return new Date(ts).toLocaleString('zh-CN') } catch { return ts } }
 
 async function loadAllData() {
   loading.value = true
   try {
+    // 使用统一合并端点（来自 traceability，已合并 customer+world_state）
     const data: any = await traceabilityAPI.getWaybills()
-    waybills.value = (data.waybills || []).map((w: any) => ({ ...w, status: w.status || 'created', driver_name: w.driver_name || '', driver_id: w.driver_id || '', vehicle_id: w.vehicle_id || '' }))
+    waybills.value = (data.waybills || []).map((w: any) => ({
+      ...w,
+      status: w.status || 'pending',
+      driver_name: w.driver_name || '',
+      driver_id: w.driver_id || '',
+      vehicle_id: w.vehicle_id || '',
+    }))
   } catch { waybills.value = [] }
   try {
     const vd: any = await vehicleAPI.getList()
@@ -230,13 +239,14 @@ async function loadAllData() {
 }
 
 async function submitCreate() {
-  if (!createForm.value.waybill_id || !createForm.value.cargo_name) { ElMessage.warning('请填写运单号和货物名称'); return }
+  if (!createForm.value.cargo_name) { ElMessage.warning('请填写货物名称'); return }
   creating.value = true
   try {
-    await traceabilityAPI.createWaybill(createForm.value)
-    ElMessage.success('运单创建成功！')
+    // 使用 customer 订单创建 API（统一入口）
+    await customerAPI.createOrder(createForm.value)
+    ElMessage.success('订单创建成功！')
     showCreateDialog.value = false
-    createForm.value = { waybill_id: genWaybillId(), cargo_name: '', cargo_category: '水果', origin: '', destination: '', quantity: 1000, unit: 'kg', shipper: '', receiver: '', notes: '' }
+    createForm.value = { cargo_name: '', cargo_category: '冷链', origin: '', destination: '', quantity: 1000, unit: 'kg', temperature_requirement: '-18℃ ~ -15℃', zone_name: '冷冻区', receiver: '', receiver_phone: '', notes: '' }
     await loadAllData()
   } catch (e: any) { ElMessage.error(e?.response?.data?.detail || '创建失败') }
   creating.value = false
@@ -247,18 +257,36 @@ function assignToDriver(row: any) { assignTarget.value = row; assignDriverId.val
 async function confirmAssign() {
   if (!assignDriverId.value) { ElMessage.warning('请选择司机'); return }
   assigning.value = true
-  const idx = waybills.value.findIndex(w => w.waybill_id === assignTarget.value?.waybill_id)
-  if (idx >= 0) {
+  try {
     const d = driverList.value.find(x => x.id === assignDriverId.value)
-    waybills.value[idx].status = 'assigned'; waybills.value[idx].driver_name = d?.name || ''; waybills.value[idx].driver_id = assignDriverId.value; waybills.value[idx].vehicle_id = assignVehicle.value
+    const orderId = assignTarget.value?.waybill_id || assignTarget.value?.order_id
+    // 调用后端 API 持久化分配
+    await customerAPI.adminAssignDriver(orderId, {
+      driver_id: assignDriverId.value,
+      driver_name: d?.name || '',
+      vehicle_id: assignVehicle.value,
+      notes: assignNote.value,
+    })
+    ElMessage.success('订单已分配给司机！')
+    showAssignDialog.value = false
+    await loadAllData()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '分配失败')
   }
-  ElMessage.success('订单已分配给司机！')
-  showAssignDialog.value = false
   assigning.value = false
 }
 
 async function cancelOrder(row: any) {
-  try { await ElMessageBox.confirm(`确定取消运单 ${row.waybill_id}？`, '确认取消', { type: 'warning' }); const idx = waybills.value.findIndex(w => w.waybill_id === row.waybill_id); if (idx >= 0) waybills.value[idx].status = 'cancelled'; ElMessage.success('已取消') } catch {}
+  try {
+    await ElMessageBox.confirm(`确定取消运单 ${row.waybill_id}？\n取消后订单将标记为已取消状态。`, '确认取消', { type: 'warning', confirmButtonText: '确认取消', cancelButtonText: '返回' })
+    await customerAPI.deleteOrder(row.waybill_id)
+    ElMessage.success('订单已取消')
+    await loadAllData()
+  } catch (e: any) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e?.response?.data?.detail || '取消失败')
+    }
+  }
 }
 
 function viewDetail(row: any) {

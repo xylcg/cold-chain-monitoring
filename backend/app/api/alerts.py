@@ -9,11 +9,26 @@ from typing import List, Optional
 from ..services.world_state import get_world_state
 from ..schemas import AlertSeverity, AlertRuleCreate
 from ..services.alert_engine import alert_engine
-from ..core.security import get_current_user
+from ..core.security import get_current_user, require_role
 
 router = APIRouter(prefix="/api/v1/alerts", tags=["告警管理"])
 
 _notification_log: list[dict] = []
+
+
+def _add_notification(alert: dict, channel: str = "api"):
+    """记录告警通知日志"""
+    _notification_log.append({
+        "alert_id": alert.get("alert_id", alert.get("device_id", "") + "-" + datetime.utcnow().isoformat()),
+        "device_id": alert.get("device_id", ""),
+        "severity": alert.get("severity", "normal"),
+        "message": alert.get("message", ""),
+        "channel": channel,
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+    # 只保留最近500条
+    if len(_notification_log) > 500:
+        _notification_log[:] = _notification_log[-500:]
 
 
 @router.get("")
@@ -66,6 +81,60 @@ async def get_active_alerts(user: dict = Depends(get_current_user)):
     }
 
 
+# ====== 🔴 P0: 司机专属告警端点 ======
+@router.get("/driver")
+async def get_driver_alerts(
+    device_id: str = None,
+    order_id: str = None,
+    limit: int = 20,
+    user: dict = Depends(require_role("driver", "admin", "warehouse")),
+):
+    """
+    司机查看自己车辆/订单的告警列表
+    
+    - **device_id**: 可选，按车辆设备筛选
+    - **order_id**: 可选，按订单筛选（通过车辆关联）
+    """
+    ws = get_world_state()
+    all_alerts = ws["alerts"]
+    driver_name = user.get("sub", "")
+    role = user.get("role", "")
+
+    # 如果是司机，只显示其车辆的告警；admin/warehouse 可以查看全部
+    if role == "driver" or device_id:
+        if not device_id:
+            # 从世界状态中找到该司机关联的车辆
+            driver_vehicles = [
+                v for v in ws["vehicles"]
+                if v.get("driver_name", "") == driver_name or v.get("driver_id", "") == driver_name
+            ]
+            if not driver_vehicles:
+                # 尝试通过 customer orders 找车辆
+                from ..api.customer import _customer_orders
+                driver_orders = [o for o in _customer_orders.values() if o.get("driver_id") == driver_name]
+                device_ids = set()
+                for o in driver_orders:
+                    for v in ws["vehicles"]:
+                        if v.get("waybill_no") == o.get("waybill_id", ""):
+                            device_ids.add(v["device_id"])
+                all_alerts = [a for a in all_alerts if a.get("device_id") in device_ids]
+            else:
+                device_ids = set(v["device_id"] for v in driver_vehicles)
+                all_alerts = [a for a in all_alerts if a.get("device_id") in device_ids]
+        else:
+            all_alerts = [a for a in all_alerts if a.get("device_id") == device_id]
+
+    # 按时间倒序
+    all_alerts.sort(key=lambda a: a.get("timestamp", ""), reverse=True)
+    result = all_alerts[:limit]
+
+    # 写入通知日志
+    for a in result:
+        _add_notification(a, channel="driver_query")
+
+    return {"count": len(result), "alerts": result, "driver": driver_name}
+
+
 @router.get("/stats")
 async def get_alert_stats(hours: int = 24, user: dict = Depends(get_current_user)):
     """告警统计 - 来自统一世界状态"""
@@ -92,6 +161,10 @@ async def acknowledge_alert(
 ):
     """确认/处置告警"""
     username = user.get("sub", "unknown")
+    _add_notification({
+        "alert_id": alert_id, "device_id": "", "severity": "normal",
+        "message": f"告警已{action} by {username}"
+    }, channel="acknowledge")
     return {
         "status": "ok", "alert_id": alert_id, "action": action,
         "acknowledged_by": username,

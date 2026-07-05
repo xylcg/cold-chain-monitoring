@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from ..core.security import get_current_user
+from ..core.security import get_current_user, require_role
 from ..services.redis_service import redis_service
 from ..services.world_state import get_world_state
 from ..schemas import TEMP_THRESHOLD
@@ -201,33 +201,98 @@ _init_sample_traces()
 
 @router.get("/waybills")
 async def get_all_waybills(
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("admin", "warehouse", "driver", "customer")),
 ):
-    """获取所有运单列表 - 来自统一世界状态"""
+    """
+    获取所有运单列表 - 合并多数据源（统一视图）
+    - world_state 模拟运单 + customer 订单 + traceability 本地运单
+    - 统一状态机: pending/accepted/in_transit/delivered/completed
+    """
+    # 动态导入 customer 订单，避免循环引用
+    from ..api.customer import _customer_orders
+
     ws = get_world_state()
-    results = []
+    merged = {}
+
+    # 1. 加载 world_state 运单（运输中）
     for waybill_id, data in ws["waybills"].items():
-        records = data["records"]
+        records = data.get("records", [])
         temps = [r["temperature"] for r in records]
-        results.append({
+        status = data.get("status", "in_transit")
+        merged[waybill_id] = {
             "waybill_id": waybill_id,
-            "cargo_name": data["cargo_type"],
-            "cargo_category": "冷链",
-            "origin": data["origin"],
-            "destination": data["destination"],
-            "stages": 4,
+            "cargo_name": data.get("cargo_name", data.get("cargo_type", "")),
+            "cargo_category": data.get("cargo_category", "冷链"),
+            "origin": data.get("origin", ""),
+            "destination": data.get("destination", ""),
+            "quantity": data.get("quantity", 0),
+            "unit": data.get("unit", "kg"),
+            "status": status,
+            "driver_name": data.get("driver_name", ""),
+            "driver_id": data.get("driver_id", ""),
+            "stages": len(records),
             "first_record": records[0]["timestamp"] if records else "",
             "last_record": records[-1]["timestamp"] if records else "",
             "avg_temperature": round(sum(temps) / len(temps), 1) if temps else 0,
-            "is_compliant": data["is_compliant"],
-        })
-    return {"count": len(results), "waybills": results, "data_source": "unified"}
+            "is_compliant": data.get("is_compliant", True),
+            "created_at": data.get("created_at", ""),
+            "source": "world_simulation",
+        }
+
+    # 2. 合并 customer 订单（会覆盖同 ID 的模拟数据，以真实订单为准）
+    for order_id, order in _customer_orders.items():
+        merged[order_id] = {
+            "waybill_id": order_id,
+            "cargo_name": order.get("cargo_name", ""),
+            "cargo_category": order.get("cargo_category", "冷链"),
+            "origin": order.get("origin", ""),
+            "destination": order.get("destination", ""),
+            "quantity": order.get("quantity", 0),
+            "unit": order.get("unit", "kg"),
+            "status": order.get("status", "pending"),
+            "driver_name": order.get("driver_name", ""),
+            "driver_id": order.get("driver_id", ""),
+            "stages": 0,
+            "first_record": order.get("created_at", ""),
+            "last_record": order.get("updated_at", ""),
+            "avg_temperature": 0,
+            "is_compliant": True,
+            "created_at": order.get("created_at", ""),
+            "source": "customer_order",
+        }
+
+    # 3. 合并 traceability 本地运单（补充）
+    for wb_id, wb in _waybills.items():
+        if wb_id not in merged:
+            merged[wb_id] = {
+                "waybill_id": wb_id,
+                "cargo_name": wb.get("cargo_name", ""),
+                "cargo_category": wb.get("cargo_category", "冷链"),
+                "origin": wb.get("origin", ""),
+                "destination": wb.get("destination", ""),
+                "quantity": wb.get("quantity", 0),
+                "unit": wb.get("unit", "kg"),
+                "status": wb.get("status", "created"),
+                "driver_name": "",
+                "driver_id": "",
+                "stages": 0,
+                "first_record": wb.get("created_at", ""),
+                "last_record": wb.get("created_at", ""),
+                "avg_temperature": 0,
+                "is_compliant": True,
+                "created_at": wb.get("created_at", ""),
+                "source": "traceability",
+            }
+
+    results = list(merged.values())
+    results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"count": len(results), "waybills": results, "data_source": "unified_merged"}
 
 
 @router.post("/waybill")
 async def create_waybill(
     data: WaybillCreate,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("admin", "warehouse")),
 ):
     """创建新运单"""
     if data.waybill_id in _waybills:
@@ -287,6 +352,7 @@ async def add_trace_record(
     notes: str = "",
     lat: float = 0,
     lng: float = 0,
+    user: dict = Depends(require_role("admin", "warehouse", "driver")),
 ):
     """添加追溯记录（由各环节自动或手动上报）"""
     import uuid
@@ -316,7 +382,7 @@ async def add_trace_record(
 @router.get("/records/{waybill_id}")
 async def get_trace_records(
     waybill_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("admin", "warehouse", "driver", "customer")),
 ):
     """查询运单的完整追溯记录"""
     linked_ids = _trace_links.get(waybill_id, [])
@@ -345,7 +411,7 @@ async def get_trace_records(
 async def generate_trace_report(
     waybill_id: str,
     format: str = "json",
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("admin", "warehouse", "customer")),
 ):
     """生成追溯报告"""
     linked_ids = _trace_links.get(waybill_id, [])
@@ -417,7 +483,7 @@ async def generate_trace_report(
 @router.get("/blockchain/verify/{waybill_id}")
 async def verify_blockchain(
     waybill_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("admin", "warehouse", "customer")),
 ):
     """验证追溯数据区块链存证（含 Merkle 树完整性验证）"""
     for block in _blockchain_ledger:
@@ -484,7 +550,7 @@ async def verify_blockchain(
 @router.get("/blockchain/ledger")
 async def get_blockchain_ledger(
     limit: int = 10,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("admin", "warehouse")),
 ):
     """查看区块链账本"""
     ledger = _blockchain_ledger[-limit:] if _blockchain_ledger else []
@@ -500,7 +566,7 @@ async def search_traces(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     limit: int = 20,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("admin", "warehouse", "customer")),
 ):
     """搜索追溯记录"""
     results = []
@@ -540,7 +606,7 @@ async def search_traces(
 
 @router.get("/stats")
 async def get_traceability_stats(
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_role("admin", "warehouse")),
 ):
     """追溯链统计数据"""
     # 优先使用统一世界状态

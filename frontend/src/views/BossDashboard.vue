@@ -255,8 +255,8 @@
                   {{ d.on_time_rate }}%
                 </span>
               </td>
-              <td class="num">{{ d.total_mileage_km.toLocaleString() }}</td>
-              <td class="num">{{ d.fuel_cost_yuan.toLocaleString() }}</td>
+              <td class="num">{{ (d.total_mileage_km ?? 0).toLocaleString() }}</td>
+              <td class="num">{{ (d.fuel_cost_yuan ?? 0).toLocaleString() }}</td>
               <td>⭐ {{ d.customer_rating }}</td>
               <td><span :class="d.temp_violations > 3 ? 'text-red' : ''">{{ d.temp_violations }}</span></td>
               <td><strong :class="d.performance_score >= 90 ? 'text-teal' : d.performance_score >= 80 ? 'text-amber' : 'text-red'">{{ d.performance_score }}</strong></td>
@@ -271,7 +271,7 @@
       <div class="section-header">
         <h3>🏢 客户分析</h3>
         <span class="card-badge badge-teal">TOP 客户</span>
-        <span class="header-tip">月度营收合计：{{ formatMoney(customerData.total_monthly_revenue) }} · 平均客单价：¥{{ customerData.avg_order_value.toLocaleString() }}</span>
+        <span class="header-tip">月度营收合计：{{ formatMoney(customerData.total_monthly_revenue) }} · 平均客单价：¥{{ (customerData.avg_order_value ?? 0).toLocaleString() }}</span>
       </div>
       <div class="customer-grid">
         <div v-for="c in customerData.customers" :key="c.name" class="customer-card">
@@ -289,7 +289,7 @@
               <div class="cc-label">月营收</div>
             </div>
             <div class="cc-stat">
-              <div class="cc-val">¥{{ c.avg_order_value.toLocaleString() }}</div>
+              <div class="cc-val">¥{{ (c.avg_order_value ?? 0).toLocaleString() }}</div>
               <div class="cc-label">客单价</div>
             </div>
           </div>
@@ -315,7 +315,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { alertAPI, dispatchAPI, resourceAPI, traceabilityAPI, customerAPI } from '@/api'
@@ -455,12 +455,17 @@ async function activateEmergency() {
 }
 
 onMounted(() => {
+  store.startAutoRefresh(8000)
   loadAlertStats()
   loadTodayStats()
   loadTraceStats()
   loadFinanceData()
   loadDriverData()
   loadCustomerData()
+})
+
+onUnmounted(() => {
+  store.stopAutoRefresh()
 })
 </script>
 
