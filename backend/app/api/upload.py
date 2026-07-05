@@ -252,6 +252,83 @@ async def review_photo(
     }
 
 
+# ====== 🔴 P0: 批量审核照片 ======
+class BatchReviewRequest(BaseModel):
+    record_ids: list[str]
+    action: str  # "approve" 或 "reject"
+    notes: str = ""
+
+
+@router.post("/review/batch")
+async def batch_review_photos(
+    body: BatchReviewRequest,
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """
+    批量审核司机上传的拍照记录
+    
+    - **record_ids**: 审核记录 ID 列表
+    - **action**: "approve" 批量通过 / "reject" 批量驳回
+    - **notes**: 审核备注
+    """
+    if body.action not in ("approve", "reject"):
+        return JSONResponse(
+            status_code=400,
+            content={"code": 400, "message": "action 必须是 approve 或 reject"}
+        )
+
+    if body.action == "reject" and not body.notes.strip():
+        return JSONResponse(
+            status_code=400,
+            content={"code": 400, "message": "批量驳回时必须填写审核备注/原因"}
+        )
+
+    if not body.record_ids:
+        return JSONResponse(
+            status_code=400,
+            content={"code": 400, "message": "record_ids 不能为空"}
+        )
+
+    now = datetime.now().isoformat()
+    reviewer = user.get("sub", "warehouse")
+    success = 0
+    skipped = 0
+    not_found = 0
+
+    for rid in body.record_ids:
+        target = None
+        for r in upload_records:
+            if r["id"] == rid:
+                target = r
+                break
+        if not target:
+            not_found += 1
+            continue
+        if target.get("review_status") != "pending_review":
+            skipped += 1
+            continue
+        target["review_status"] = "approved" if body.action == "approve" else "rejected"
+        target["review_notes"] = body.notes
+        target["reviewed_by"] = reviewer
+        target["reviewed_at"] = now
+        success += 1
+
+    _save_records()
+    action_label = "通过" if body.action == "approve" else "驳回"
+    logger.info(f"批量审核{action_label}: 成功{success}, 跳过{skipped}, 未找到{not_found}")
+
+    return {
+        "code": 200,
+        "message": f"批量审核完成: {action_label} {success}条",
+        "data": {
+            "success": success,
+            "skipped": skipped,
+            "not_found": not_found,
+            "total_requested": len(body.record_ids),
+        },
+    }
+
+
 @router.get("/review-stats")
 async def review_stats(
     user: dict = Depends(require_role("admin", "warehouse")),

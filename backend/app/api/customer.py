@@ -204,6 +204,36 @@ async def scan_qr_query(
 
 # ==================== 顾客下单 ====================
 
+# 运单存储（订单→运单关联）
+_customer_waybills: dict = {}  # order_id -> waybill 数据
+
+
+def _create_waybill_for_order(order: dict) -> dict:
+    """为订单自动创建关联运单，确保追溯链路完整"""
+    waybill_id = f"WB-{order['order_id']}"
+    now = datetime.utcnow().isoformat()
+    waybill = {
+        "waybill_id": waybill_id,
+        "order_id": order["order_id"],
+        "cargo_type": order["cargo_name"],
+        "cargo_category": order.get("cargo_category", "冷链"),
+        "temperature_requirement": order["temperature_requirement"],
+        "origin": order["origin"],
+        "destination": order["destination"],
+        "quantity": order.get("quantity", 0),
+        "unit": order.get("unit", "kg"),
+        "departure_time": None,
+        "estimated_arrival": None,
+        "current_status": "created",
+        "is_compliant": True,
+        "records": [],  # 温度记录列表
+        "created_at": now,
+        "updated_at": now,
+    }
+    _customer_waybills[order["order_id"]] = waybill
+    return waybill
+
+
 @router.post("/create-order")
 async def create_order(
     data: CustomerOrderCreate,
@@ -212,6 +242,7 @@ async def create_order(
     """顾客/管理员/仓库创建新订单"""
     order_id = f"ORD-{datetime.utcnow().strftime('%Y%m%d')}-{str(uuid.uuid4())[:4].upper()}"
     now = datetime.utcnow().isoformat()
+    waybill_id = f"WB-{order_id}"
     order = {
         "order_id": order_id,
         "customer_id": user.get("sub", "unknown"),
@@ -233,6 +264,7 @@ async def create_order(
         "signed_by_customer": False,  # 客户是否已签收确认
         "accept_photo_url": None,     # 司机接单拍照URL
         "deliver_photo_url": None,    # 司机送达拍照URL
+        "waybill_id": waybill_id,     # 🔴 关联运单ID
         "created_at": now,
         "updated_at": now,
         "price": round(data.quantity * 3.5 + 200, 0),  # 模拟运费计算
@@ -241,7 +273,32 @@ async def create_order(
         "temp_range": data.temperature_requirement,
     }
     _customer_orders[order_id] = order
-    return {"status": "ok", "order": order}
+
+    # 🔴 自动创建关联运单
+    _create_waybill_for_order(order)
+
+    return {"status": "ok", "order": order, "waybill_created": True}
+
+
+# ====== 🔴 P0: 查询订单关联运单 ======
+@router.get("/order-waybill/{order_id}")
+async def get_order_waybill(
+    order_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """获取订单关联的运单信息（含温度记录）"""
+    if order_id not in _customer_orders:
+        raise HTTPException(status_code=404, detail="订单不存在")
+
+    waybill = _customer_waybills.get(order_id)
+    if not waybill:
+        return {"status": "ok", "waybill": None, "message": "该订单暂未关联运单"}
+
+    return {
+        "status": "ok",
+        "order_id": order_id,
+        "waybill": waybill,
+    }
 
 
 @router.get("/my-orders-new")
@@ -688,3 +745,116 @@ async def admin_assign_driver(
     if data.notes:
         order["notes"] = (order.get("notes", "") + f" [管理员备注: {data.notes}]").strip()
     return {"status": "ok", "order": order}
+
+
+# ==================== 仓库订单审核 ====================
+
+class OrderReviewRequest(BaseModel):
+    action: str  # "approve" 或 "reject"
+    notes: str = ""
+
+
+@router.get("/pending-review-orders")
+async def get_pending_review_orders(user: dict = Depends(require_role("admin", "warehouse"))):
+    """获取待审核的订单（已接单但尚未审核）"""
+    pending = [
+        o for o in _customer_orders.values()
+        if o.get("status") == "accepted" and not o.get("review_status")
+    ]
+    pending.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"count": len(pending), "orders": pending}
+
+
+@router.get("/all-review-orders")
+async def get_all_review_orders(
+    status: str = None,
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """获取所有审核订单（可按状态筛选）"""
+    all_orders = list(_customer_orders.values())
+    if status and status != "all":
+        if status == "pending":
+            all_orders = [o for o in all_orders if o.get("status") == "accepted" and not o.get("review_status")]
+        else:
+            all_orders = [o for o in all_orders if o.get("review_status") == status]
+    all_orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"count": len(all_orders), "orders": all_orders}
+
+
+@router.post("/review-order/{order_id}")
+async def review_order(
+    order_id: str,
+    body: OrderReviewRequest,
+    user: dict = Depends(require_role("admin", "warehouse")),
+):
+    """审核订单（通过/驳回）"""
+    if order_id not in _customer_orders:
+        raise HTTPException(status_code=404, detail="订单不存在")
+    order = _customer_orders[order_id]
+    if body.action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action 必须是 approve 或 reject")
+    if body.action == "reject" and not body.notes.strip():
+        raise HTTPException(status_code=400, detail="驳回订单必须填写原因")
+    
+    order["review_status"] = "approved" if body.action == "approve" else "rejected"
+    order["review_notes"] = body.notes
+    order["reviewed_by"] = user.get("sub", "")
+    order["reviewed_at"] = datetime.utcnow().isoformat()
+    
+    if body.action == "reject":
+        # 驳回后订单回到待接单状态
+        order["status"] = "pending"
+        order["driver_id"] = ""
+        order["driver_name"] = ""
+    else:
+        # 审核通过：自动扣减库存（出库操作）
+        _deduct_inventory_for_order(order)
+    
+    return {"status": "ok", "order": order}
+
+
+def _deduct_inventory_for_order(order: dict):
+    """
+    审核通过后自动扣减库存。
+    从世界状态的仓库库存中查找匹配的货物并扣减对应数量。
+    """
+    try:
+        from ..services.world_state import get_world_state
+        ws = get_world_state()
+        
+        cargo_name = order.get("cargo_name", "")
+        quantity = order.get("quantity", 0)
+        zone_name = order.get("zone_name", "")
+        
+        if quantity <= 0:
+            return
+        
+        # 遍历仓库库存，查找匹配的货物
+        warehouse_inventory = ws.get("warehouse_inventory", {})
+        if not warehouse_inventory:
+            return
+        
+        remaining = quantity
+        for wh_id, wh_data in warehouse_inventory.items():
+            items = wh_data.get("items", [])
+            for item in items:
+                if remaining <= 0:
+                    break
+                # 匹配产品名或温区
+                if (cargo_name and cargo_name in item.get("product_name", "")) or \
+                   (zone_name and zone_name in item.get("zone", "")):
+                    available = item.get("quantity_kg", 0)
+                    if available > 0:
+                        deduct = min(remaining, available)
+                        item["quantity_kg"] = available - deduct
+                        remaining -= deduct
+                        item["updated_at"] = datetime.utcnow().isoformat()
+            if remaining <= 0:
+                break
+        
+        if remaining > 0:
+            # 库存不足记录日志
+            print(f"[WARNING] 订单 {order.get('order_id')} 审核通过，但库存不足以完全扣减，"
+                  f"需求: {quantity}kg, 已扣: {quantity - remaining}kg, 缺口: {remaining}kg")
+    except Exception as e:
+        print(f"[ERROR] 库存扣减失败: {e}")

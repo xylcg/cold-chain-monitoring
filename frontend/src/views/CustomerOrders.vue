@@ -7,6 +7,45 @@
         <div class="mb-header-sub">下单 · 追踪 · 签收</div>
       </div>
 
+      <!-- ===== 消费概览卡片 ===== -->
+      <div class="cust-overview">
+        <div class="co-card">
+          <div class="co-icon">📦</div>
+          <div class="co-val">{{ orders.length }}</div>
+          <div class="co-lbl">全部订单</div>
+        </div>
+        <div class="co-card">
+          <div class="co-icon">🚛</div>
+          <div class="co-val accent">{{ activeCount }}</div>
+          <div class="co-lbl">配送中</div>
+        </div>
+        <div class="co-card">
+          <div class="co-icon">✅</div>
+          <div class="co-val success">{{ completedCount }}</div>
+          <div class="co-lbl">已完成</div>
+        </div>
+        <div class="co-card">
+          <div class="co-icon">💰</div>
+          <div class="co-val gold">¥{{ totalSpent }}</div>
+          <div class="co-lbl">消费总额</div>
+        </div>
+      </div>
+
+      <!-- ===== 智能温区推荐 ===== -->
+      <div class="zone-recommend" v-if="activeTab === 'create'">
+        <div class="zr-header">💡 智能温区推荐</div>
+        <div class="zr-cards">
+          <div class="zr-card" v-for="z in zoneRecs" :key="z.name" @click="selectZoneRec(z)">
+            <span class="zrc-icon">{{ z.icon }}</span>
+            <div class="zrc-body">
+              <span class="zrc-name">{{ z.label }}</span>
+              <span class="zrc-desc">{{ z.desc }}</span>
+            </div>
+            <span class="zrc-arrow">→</span>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== 我的订单 Tab ===== -->
       <div class="mb-page" v-show="activeTab === 'orders'">
         <!-- 状态过滤栏 -->
@@ -345,6 +384,26 @@ function filterFn(o: any, key: string): boolean {
 
 const filteredOrders = computed(() => orders.value.filter(o => filterFn(o, statusFilter.value)))
 
+// ====== 消费统计 ======
+const activeCount = computed(() => orders.value.filter(o => ['accepted', 'in_transit', 'delivered'].includes(o.status)).length)
+const completedCount = computed(() => orders.value.filter(o => o.status === 'completed').length)
+const totalSpent = computed(() => {
+  return orders.value.reduce((sum, o) => sum + (o.price || 0), 0).toLocaleString()
+})
+
+// ====== 智能温区推荐 ======
+const zoneRecs = [
+  { name: '冷冻区', label: '❄️ 冷冻区', icon: '❄️', desc: '-22℃~-15℃ · 适合冷冻海鲜、肉类', temp: '-22℃ ~ -15℃' },
+  { name: '冷藏区', label: '🧊 冷藏区', icon: '🧊', desc: '0℃~4℃ · 适合乳制品、生鲜蔬菜', temp: '0℃ ~ 4℃' },
+  { name: '恒温区', label: '🌡️ 恒温区', icon: '🌡️', desc: '15℃~20℃ · 适合巧克力、红酒', temp: '15℃ ~ 20℃' },
+]
+function selectZoneRec(z: any) {
+  form.zone_name = z.name
+  form.temperature_requirement = z.temp
+  activeTab.value = 'create'
+  ElMessage.success(`已选择 ${z.label}`)
+}
+
 function zoneClass(zoneName: string): string {
   if (zoneName?.includes('冷冻')) return 'z-freeze'
   if (zoneName?.includes('冷藏')) return 'z-chill'
@@ -569,6 +628,41 @@ onMounted(() => {
 }
 .mb-header-title { font-size: 20px; font-weight: 800; }
 .mb-header-sub { font-size: 12px; opacity: 0.8; margin-top: 4px; }
+
+/* ====== Customer Overview ====== */
+.cust-overview {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 10px; padding: 0 12px; margin-bottom: 8px;
+}
+.co-card {
+  background: #fff; border-radius: 14px; padding: 14px 10px;
+  text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.04);
+  transition: transform 0.2s;
+}
+.co-card:hover { transform: translateY(-2px); }
+.co-icon { font-size: 22px; margin-bottom: 6px; }
+.co-val { font-size: 18px; font-weight: 800; color: #1a1a2e; font-family: var(--font-display); }
+.co-val.accent { color: #00a8ff; }
+.co-val.success { color: var(--teal); }
+.co-val.gold { color: #f59e0b; font-size: 14px; }
+.co-lbl { font-size: 10px; color: #999; margin-top: 2px; }
+
+/* ====== Zone Recommend ====== */
+.zone-recommend { margin: 0 12px 16px; }
+.zr-header { font-size: 13px; font-weight: 700; color: #1a1a2e; margin-bottom: 10px; }
+.zr-cards { display: flex; flex-direction: column; gap: 8px; }
+.zr-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px; background: #fff; border-radius: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04); cursor: pointer;
+  transition: all 0.2s; border: 1px solid transparent;
+}
+.zr-card:hover { border-color: #00a8ff; box-shadow: 0 2px 12px rgba(0,168,255,.1); transform: translateX(4px); }
+.zrc-icon { font-size: 24px; flex-shrink: 0; }
+.zrc-body { flex: 1; }
+.zrc-name { display: block; font-size: 14px; font-weight: 600; color: #1a1a2e; }
+.zrc-desc { display: block; font-size: 11px; color: #999; margin-top: 2px; }
+.zrc-arrow { color: #ccc; font-size: 18px; }
 
 /* Filter */
 .mb-filter-bar {

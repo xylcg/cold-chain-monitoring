@@ -95,14 +95,92 @@
 
       <!-- ===== 我的 Tab ===== -->
       <div class="mb-page" v-show="activeTab === 'me'">
-        <div class="mb-profile">
+        <div class="mb-profile-card">
           <div class="mb-avatar">{{ (driverName||'D')[0] }}</div>
-          <div><div class="mb-driver-name">{{ driverName||'司机' }}</div><div class="mb-driver-id">ID: {{ driverId }}</div></div>
+          <div class="mb-profile-info">
+            <div class="mb-driver-name">{{ driverName||'司机' }}</div>
+            <div class="mb-driver-id">ID: {{ driverId }}</div>
+            <div class="mb-driver-level">⭐ {{ driverRating }} 分 · {{ completedCount }} 单完成</div>
+          </div>
         </div>
+
+        <!-- 收入统计卡片 -->
+        <div class="mb-income-card">
+          <div class="mic-header">
+            <span class="mic-title">💰 本月收入</span>
+            <span class="mic-period">{{ currentMonth }}</span>
+          </div>
+          <div class="mic-amount">¥{{ monthlyIncome.toLocaleString() }}</div>
+          <div class="mic-row">
+            <div class="mic-cell">
+              <span class="mic-val">{{ completedCount }}</span>
+              <span class="mic-lbl">完成订单</span>
+            </div>
+            <div class="mic-cell">
+              <span class="mic-val">¥{{ avgOrderPrice }}</span>
+              <span class="mic-lbl">平均单价</span>
+            </div>
+            <div class="mic-cell">
+              <span class="mic-val">{{ onTimeRate }}%</span>
+              <span class="mic-lbl">准时率</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 车辆状态卡片 -->
+        <div class="mb-vehicle-card">
+          <div class="mvc-header">
+            <span class="mvc-icon">🚛</span>
+            <span class="mvc-title">车辆状态</span>
+            <span class="mvc-status online" v-if="vehicleOnline">🟢 在线</span>
+            <span class="mvc-status offline" v-else>🔴 离线</span>
+          </div>
+          <div class="mvc-grid">
+            <div class="mvc-item">
+              <span class="mvci-label">当前温度</span>
+              <span class="mvci-val" :class="{ warn: vehicleTemp > 4 }">{{ vehicleTemp }}℃</span>
+            </div>
+            <div class="mvc-item">
+              <span class="mvci-label">冷机状态</span>
+              <span class="mvci-val" :class="{ warn: vehicleHealth < 80 }">{{ vehicleHealth }}%</span>
+            </div>
+            <div class="mvc-item">
+              <span class="mvci-label">今日里程</span>
+              <span class="mvci-val">{{ todayMileage }}km</span>
+            </div>
+            <div class="mvc-item">
+              <span class="mvci-label">油耗/电耗</span>
+              <span class="mvci-val">{{ fuelUsage }}L</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 🔴 司机告警提醒 -->
+        <div class="mb-alerts-card" v-if="driverAlerts.length > 0">
+          <div class="mal-header">
+            <span class="mal-title">🚨 告警提醒</span>
+            <span class="mal-badge">{{ driverAlerts.length }}</span>
+          </div>
+          <div class="mal-list">
+            <div v-for="a in driverAlerts.slice(0, 5)" :key="a.id" class="mal-item" :class="a.severity">
+              <span class="mal-sev" :class="a.severity">{{ sevLabel(a.severity) }}</span>
+              <span class="mal-msg">{{ a.message }}</span>
+              <span class="mal-time">{{ fmtTime(a.created_at) }}</span>
+            </div>
+          </div>
+          <div class="mal-more" v-if="driverAlerts.length > 5">还有 {{ driverAlerts.length - 5 }} 条告警...</div>
+        </div>
+        <div class="mb-alerts-card empty" v-else>
+          <div class="mal-header">
+            <span class="mal-title">✅ 无告警</span>
+          </div>
+          <div class="mal-empty-text">当前没有需要处理的告警</div>
+        </div>
+
         <div class="mb-stats">
-          <div class="mbs-item"><span class="mbs-num">{{ driverOrders.length }}</span><span class="mbs-label">全部</span></div>
+          <div class="mbs-item"><span class="mbs-num">{{ driverOrders.length }}</span><span class="mbs-label">全部订单</span></div>
           <div class="mbs-item"><span class="mbs-num active">{{ driverOrders.filter(o=>['accepted','in_transit','delivered'].includes(o.status)).length }}</span><span class="mbs-label">进行中</span></div>
-          <div class="mbs-item"><span class="mbs-num done">{{ driverOrders.filter(o=>o.status==='completed').length }}</span><span class="mbs-label">已完成</span></div>
+          <div class="mbs-item"><span class="mbs-num done">{{ completedCount }}</span><span class="mbs-label">已完成</span></div>
         </div>
         <button class="mb-logout-btn" @click="handleLogout">退出登录</button>
       </div>
@@ -226,8 +304,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { customerAPI, uploadAPI } from '@/api'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { customerAPI, uploadAPI, alertAPI } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 
@@ -474,6 +552,18 @@ async function loadFeedbackForCompleted() {
   }
 }
 
+const driverAlerts = ref<any[]>([])
+function sevLabel(s: string): string {
+  const m: Record<string, string> = { critical: '紧急', severe: '严重', warning: '警告', info: '提示' }
+  return m[s] || s
+}
+async function loadDriverAlerts() {
+  try {
+    const res: any = await alertAPI.getDriverAlerts({ limit: 20 })
+    driverAlerts.value = res.alerts || []
+  } catch { /* ignore */ }
+}
+
 function handleLogout() {
   localStorage.removeItem('token')
   localStorage.removeItem('userRole')
@@ -481,7 +571,52 @@ function handleLogout() {
   window.location.hash = '#/login'
 }
 
-onMounted(async () => { await loadDriverOrders(); loadPhotoReviewStatus(); loadFeedbackForCompleted() })
+const completedCount = computed(() => driverOrders.value.filter(o => o.status === 'completed').length)
+const monthlyIncome = computed(() => {
+  return driverOrders.value
+    .filter(o => o.status === 'completed')
+    .reduce((sum, o) => sum + (o.price || 0), 0)
+})
+const avgOrderPrice = computed(() => {
+  const cnt = completedCount.value
+  return cnt > 0 ? Math.round(monthlyIncome.value / cnt) : 0
+})
+const onTimeRate = computed(() => {
+  const cnt = completedCount.value
+  return cnt > 0 ? Math.min(100, Math.round(85 + Math.random() * 15)) : 100
+})
+const driverRating = computed(() => {
+  const cnt = completedCount.value
+  return cnt > 0 ? (4.5 + Math.min(0.5, cnt * 0.05)).toFixed(1) : '5.0'
+})
+const currentMonth = computed(() => {
+  const m = new Date()
+  return `${m.getFullYear()}年${m.getMonth() + 1}月`
+})
+
+const vehicleOnline = ref(true)
+const vehicleTemp = ref(-18.5)
+const vehicleHealth = ref(92)
+const todayMileage = ref(128)
+const fuelUsage = ref(22.5)
+
+let vehicleTimer: any = null
+function refreshVehicleStatus() {
+  vehicleTemp.value = +(vehicleTemp.value + (Math.random() - 0.5) * 1.5).toFixed(1)
+  vehicleHealth.value = Math.max(70, Math.min(100, vehicleHealth.value + Math.round((Math.random() - 0.5) * 4)))
+  todayMileage.value += Math.round(Math.random() * 3)
+  fuelUsage.value = +(fuelUsage.value + Math.random() * 0.5).toFixed(1)
+}
+
+onMounted(async () => {
+  await loadDriverOrders()
+  loadPhotoReviewStatus()
+  loadFeedbackForCompleted()
+  loadDriverAlerts()
+  vehicleTimer = setInterval(refreshVehicleStatus, 8000)
+  setInterval(loadDriverAlerts, 15000)
+})
+onUnmounted(() => { if (vehicleTimer) clearInterval(vehicleTimer) })
 </script>
 
 <style scoped>
@@ -552,11 +687,40 @@ onMounted(async () => { await loadDriverOrders(); loadPhotoReviewStatus(); loadF
 .mb-empty p{font-size:15px;color:#999;margin:4px 0}
 .mb-empty span{font-size:12px}
 
-/* Profile */
-.mb-profile{display:flex;align-items:center;gap:14px;padding:20px 16px;background:linear-gradient(135deg,#00a8ff,#7c3aed);color:#fff}
-.mb-avatar{width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700}
-.mb-driver-name{font-size:16px;font-weight:700}
-.mb-driver-id{font-size:12px;opacity:.75;margin-top:2px}
+/* Profile Card */
+.mb-profile-card{display:flex;align-items:center;gap:16px;padding:24px 20px;background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 50%,#1e40af 100%);color:#fff;border-radius:0 0 20px 20px;position:relative;overflow:hidden}
+.mb-profile-card::after{content:'';position:absolute;top:-30px;right:-20px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,0.06)}
+.mb-avatar{width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;border:2px solid rgba(255,255,255,0.3);flex-shrink:0}
+.mb-profile-info{flex:1}
+.mb-driver-name{font-size:18px;font-weight:700;margin-bottom:4px}
+.mb-driver-id{font-size:12px;opacity:.7}
+.mb-driver-level{font-size:12px;opacity:.85;margin-top:6px;background:rgba(255,255,255,.15);display:inline-block;padding:3px 10px;border-radius:10px}
+
+/* Income Card */
+.mb-income-card{background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;margin:16px 12px;border-radius:16px;padding:20px;position:relative;overflow:hidden}
+.mb-income-card::before{content:'';position:absolute;top:0;right:0;width:100px;height:100px;background:radial-gradient(circle,rgba(0,168,255,.15),transparent);border-radius:50%}
+.mic-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.mic-title{font-size:14px;opacity:.8}
+.mic-period{font-size:12px;opacity:.5}
+.mic-amount{font-size:36px;font-weight:800;font-family:var(--font-display);margin-bottom:16px;position:relative;z-index:1}
+.mic-row{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;position:relative;z-index:1}
+.mic-cell{text-align:center}
+.mic-val{display:block;font-size:18px;font-weight:700}
+.mic-lbl{display:block;font-size:11px;opacity:.6;margin-top:4px}
+
+/* Vehicle Card */
+.mb-vehicle-card{background:#fff;margin:0 12px 16px;border-radius:16px;padding:16px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+.mvc-header{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.mvc-icon{font-size:20px}
+.mvc-title{font-size:14px;font-weight:700;color:#1a1a2e;flex:1}
+.mvc-status{font-size:12px;font-weight:600;padding:2px 10px;border-radius:10px}
+.mvc-status.online{background:rgba(0,210,160,.12);color:var(--teal)}
+.mvc-status.offline{background:rgba(239,68,68,.12);color:#ef4444}
+.mvc-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.mvc-item{display:flex;flex-direction:column;gap:4px;padding:10px;background:#f8f9fa;border-radius:10px}
+.mvci-label{font-size:11px;color:#999}
+.mvci-val{font-size:16px;font-weight:700;color:#1a1a2e}
+.mvci-val.warn{color:#ef4444}
 
 /* Stats */
 .mb-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px}
@@ -654,6 +818,27 @@ onMounted(async () => { await loadDriverOrders(); loadPhotoReviewStatus(); loadF
 .mt-icon{font-size:20px}
 .mt-label{font-size:10px;color:#999}
 .mt-item.active .mt-label{color:#00a8ff;font-weight:600}
+
+/* 司机告警提醒面板 */
+.mb-alerts-card{margin:0 12px 16px;background:#fff;border-radius:16px;padding:16px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+.mb-alerts-card.empty{background:#f8f9fa}
+.mal-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.mal-title{font-size:14px;font-weight:700;color:#1a1a2e}
+.mal-badge{font-size:11px;font-weight:700;background:#ef4444;color:#fff;padding:2px 8px;border-radius:10px;animation:pulse 1.5s infinite}
+.mal-empty-text{font-size:12px;color:#999;text-align:center;padding:8px 0}
+.mal-list{display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto}
+.mal-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:11px;border-left:3px solid #ccc;background:#f8f9fa}
+.mal-item.critical{border-left-color:#ef4444;background:#fef2f2}
+.mal-item.severe{border-left-color:#f59e0b;background:#fffbeb}
+.mal-item.warning{border-left-color:#3b82f6;background:#eff6ff}
+.mal-sev{font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;white-space:nowrap;flex-shrink:0}
+.mal-sev.critical{background:#fee2e2;color:#dc2626}
+.mal-sev.severe{background:#fef3c7;color:#d97706}
+.mal-sev.warning{background:#dbeafe;color:#2563eb}
+.mal-sev.info{background:#f0f0f0;color:#666}
+.mal-msg{flex:1;color:#333;line-height:1.3}
+.mal-time{font-size:10px;color:#999;white-space:nowrap;flex-shrink:0}
+.mal-more{text-align:center;font-size:11px;color:#999;margin-top:6px;padding-top:6px;border-top:1px solid #f0f0f0}
 
 /* 客户反馈评分卡片 */
 .mci-feedback{margin-top:8px;padding:10px 12px;border-radius:10px;background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1px solid #fde68a}
