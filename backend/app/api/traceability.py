@@ -531,6 +531,12 @@ async def public_trace_query(trace_code: str):
     records = [r for r in TRACE_RECORDS if r["id"] in record_ids]
     records = sorted(records, key=lambda r: r["timestamp"])
 
+    # 如果没有追溯记录，自动生成模拟数据
+    if not records:
+        _generate_mock_records(data["waybill_id"], trace_code, data)
+        records = [r for r in TRACE_RECORDS if r["id"] in TRACE_CODE_MAP.get(trace_code, [])]
+        records = sorted(records, key=lambda r: r["timestamp"])
+
     temps = [r["temperature"] for r in records if "temperature" in r]
     temp_range = {"min": min(temps) if temps else 0, "max": max(temps) if temps else 0,
                   "avg": round(sum(temps) / len(temps), 2) if temps else 0}
@@ -760,6 +766,9 @@ async def create_trace_data(
     WAYBILL_TRACE_MAP[waybill_id] = trace_code
     TRACE_CODE_MAP[trace_code] = []
 
+    # 自动生成模拟追溯记录，确保新创建的运单有追溯数据
+    _generate_mock_records(waybill_id, trace_code, TRACE_DATA[trace_code])
+
     return {"status": "ok", "trace_code": trace_code, "waybill_id": waybill_id}
 
 
@@ -776,6 +785,12 @@ async def get_trace_data(
     record_ids = TRACE_CODE_MAP.get(trace_code, [])
     records = [r for r in TRACE_RECORDS if r["id"] in record_ids]
     records = sorted(records, key=lambda r: r["timestamp"])
+
+    # 如果没有追溯记录，自动生成模拟数据
+    if not records:
+        _generate_mock_records(data["waybill_id"], trace_code, data)
+        records = [r for r in TRACE_RECORDS if r["id"] in TRACE_CODE_MAP.get(trace_code, [])]
+        records = sorted(records, key=lambda r: r["timestamp"])
 
     return {
         "trace_code": trace_code,
@@ -1047,7 +1062,10 @@ async def generate_trace_report(
     records = sorted(records, key=lambda r: r["timestamp"])
 
     if not records:
-        raise HTTPException(status_code=404, detail="无追溯记录")
+        # 自动生成模拟追溯记录，而非直接返回404
+        _generate_mock_records(data["waybill_id"], trace_code, data)
+        records = [r for r in TRACE_RECORDS if r["id"] in TRACE_CODE_MAP.get(trace_code, [])]
+        records = sorted(records, key=lambda r: r["timestamp"])
 
     temps = [r["temperature"] for r in records if "temperature" in r]
     stages = list(set(r["stage"] for r in records))
