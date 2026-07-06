@@ -43,6 +43,7 @@ ALERT_TYPES = {
     "idle_timeout": {"category": "行驶类", "label": "长时间违规停留", "default_severity": "severe"},
     "speed_abnormal": {"category": "行驶类", "label": "低速怠速异常", "default_severity": "normal"},
     "vibration_high": {"category": "行驶类", "label": "异常颠簸振动", "default_severity": "normal"},
+    "humidity_high": {"category": "温控类", "label": "湿度过高", "default_severity": "normal"},
     "door_open_timeout": {"category": "作业类", "label": "车门超时开启", "default_severity": "severe"},
     "loading_timeout": {"category": "作业类", "label": "超时装卸货", "default_severity": "severe"},
     "door_night_open": {"category": "作业类", "label": "夜间非作业开门", "default_severity": "severe"},
