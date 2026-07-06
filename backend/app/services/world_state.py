@@ -263,27 +263,39 @@ def _generate_maintenance_data(vehicle: dict):
         "device_id": vehicle["device_id"],
         "plate_number": vehicle["plate_number"],
         "refrigeration_unit": vehicle.get("refrigeration_unit", "Carrier-Transicold"),
-        "brand": unit_info["brand"],
-        "model": unit_info["model"],
-        "total_operating_hours": total_hours,
-        "remaining_life_hours": remaining_life,
+        "unit_brand": unit_info["brand"],
+        "unit_model": unit_info["model"],
+        "unit_power_kw": round(random.uniform(2, 8), 1),
+        "total_life_hours": unit_info["typical_life_hours"],
+        "current_run_hours": total_hours,
+        "remaining_life_days": round(remaining_life / 24, 1),
         "health_score": round(health * 100, 1),
-        "failure_probability": round(failure_prob * 100, 1),
+        "failure_probability": round(failure_prob, 3),
         "risk_level": risk_level,
+        "risk_label": {"high": "高风险", "medium": "中风险", "low": "低风险"}.get(risk_level, "低风险"),
         "feature_importance": feature_importance,
-        "predicted_failure_mode": random.choice(["压缩机磨损", "冷凝器堵塞", "制冷剂泄漏", "电气故障", "轴承磨损"]),
-        "recommended_action": "建议在24小时内安排检修" if risk_level == "high"
-        else "建议在一周内安排保养" if risk_level == "medium"
-        else "运行正常，按计划保养即可",
-        "current_params": {
-            "compressor_temp_c": round(random.uniform(40, 85), 1),
-            "condenser_pressure_bar": round(random.uniform(8, 25), 1),
-            "refrigerant_level_pct": round(random.uniform(60, 100), 1),
-            "vibration_mm_s": round(random.uniform(0.5, 4.5), 2),
-            "power_consumption_kw": round(random.uniform(2, 8), 1),
-            "ambient_temp_c": round(random.uniform(20, 38), 1),
+        "predicted_failure_type": random.choice(["压缩机磨损", "冷凝器堵塞", "制冷剂泄漏", "电气故障", "轴承磨损"]),
+        "next_maintenance_hours": max(1, round(remaining_life / 24 * 8)),
+        "next_maintenance_label": "24小时内" if risk_level == "high" else "一周内" if risk_level == "medium" else "按计划保养",
+        "real_time_params": {
+            "压缩机温度": round(random.uniform(40, 85), 1),
+            "冷凝器压力": round(random.uniform(8, 25), 1),
+            "制冷剂液位": round(random.uniform(60, 100), 1),
+            "振动幅度": round(random.uniform(0.5, 4.5), 2),
+            "功耗": round(random.uniform(2, 8), 1),
+            "环境温度": round(random.uniform(20, 38), 1),
         },
-        "maintenance_history": _generate_maintenance_history(vehicle["device_id"]),
+        "maintenance_history": [
+            {
+                "event_id": f"EVT-{random.randint(1000,9999)}",
+                "event_date": h["date"],
+                "event_type": h["type"],
+                "notes": h["description"],
+                "technician": h["technician"],
+                "cost_yuan": h["cost_yuan"],
+            }
+            for h in _generate_maintenance_history(vehicle["device_id"])
+        ],
     }
 
 
@@ -694,6 +706,250 @@ def _generate_fences():
         fence_id += 1
 
     for city_name, (lat, lng) in list(CITY_COORDS.items())[:15]:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": f"{city_name}城市围栏",
+            "fence_type": "city",
+            "category": "city_zone",
+            "data": {
+                "city_name": city_name,
+                "province": "未知",
+                "center": {"lat": lat, "lng": lng},
+                "radius_meters": 50000,
+            },
+            "description": f"{city_name}行政区域围栏",
+            "active": True,
+            "alert_level": "info",
+            "tags": ["city", city_name],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    # 新增：更多仓库围栏（覆盖主要城市）
+    extra_warehouses = [
+        {"name": "东北冷链中心", "city": "沈阳", "lat": 41.80, "lng": 123.43},
+        {"name": "西北冷链基地", "city": "西安", "lat": 34.34, "lng": 108.94},
+        {"name": "东南配送中心", "city": "福州", "lat": 26.07, "lng": 119.30},
+        {"name": "山东冷链中心", "city": "济南", "lat": 36.65, "lng": 117.12},
+        {"name": "河南分拨中心", "city": "郑州", "lat": 34.75, "lng": 113.63},
+        {"name": "湖南冷链基地", "city": "长沙", "lat": 28.23, "lng": 112.94},
+        {"name": "云南冷链中心", "city": "昆明", "lat": 25.04, "lng": 102.72},
+        {"name": "广西配送中心", "city": "南宁", "lat": 22.82, "lng": 108.37},
+        {"name": "海南前置仓", "city": "海口", "lat": 20.04, "lng": 110.20},
+        {"name": "贵州冷链基地", "city": "贵阳", "lat": 26.65, "lng": 106.63},
+        {"name": "江西分拨中心", "city": "南昌", "lat": 28.68, "lng": 115.86},
+        {"name": "山西冷链中心", "city": "太原", "lat": 37.87, "lng": 112.55},
+        {"name": "河北配送中心", "city": "石家庄", "lat": 38.04, "lng": 114.51},
+        {"name": "内蒙古冷链基地", "city": "呼和浩特", "lat": 40.84, "lng": 111.75},
+        {"name": "新疆冷链中心", "city": "乌鲁木齐", "lat": 43.83, "lng": 87.62},
+    ]
+
+    for wh in extra_warehouses:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": f"{wh['name']}围栏",
+            "fence_type": "circle",
+            "category": "warehouse",
+            "data": {
+                "center": {"lat": wh["lat"], "lng": wh["lng"]},
+                "radius_meters": 500,
+            },
+            "description": f"{wh['name']}地理围栏",
+            "active": True,
+            "alert_level": "normal",
+            "allowed_stay_minutes": 120,
+            "tags": ["warehouse", wh["city"]],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    # 新增：更多干线围栏
+    extra_routes = [
+        ["上海", "南京", "合肥", "武汉", "长沙", "广州"],
+        ["广州", "南宁", "昆明", "成都", "西安", "兰州"],
+        ["北京", "石家庄", "郑州", "武汉", "长沙", "广州", "深圳"],
+        ["上海", "杭州", "南昌", "长沙", "贵阳", "昆明"],
+        ["天津", "济南", "南京", "上海", "杭州", "福州"],
+        ["沈阳", "大连", "青岛", "济南", "郑州", "西安"],
+        ["哈尔滨", "长春", "沈阳", "北京", "呼和浩特", "银川"],
+        ["成都", "重庆", "贵阳", "南宁", "海口"],
+        ["兰州", "西宁", "乌鲁木齐"],
+        ["福州", "厦门", "深圳", "广州"],
+    ]
+
+    for route in extra_routes:
+        for j in range(len(route) - 1):
+            from_city = route[j]
+            to_city = route[j + 1]
+            from_coord = CITY_COORDS.get(from_city, (39.9, 116.4))
+            to_coord = CITY_COORDS.get(to_city, (39.9, 116.4))
+            mid_lat = (from_coord[0] + to_coord[0]) / 2
+            mid_lng = (from_coord[1] + to_coord[1]) / 2
+
+            fences.append({
+                "fence_id": f"FENCE-{fence_id:04d}",
+                "name": f"{from_city}-{to_city}干线",
+                "fence_type": "line_buffer",
+                "category": "route_segment",
+                "data": {
+                    "points": [
+                        {"lat": from_coord[0], "lng": from_coord[1]},
+                        {"lat": mid_lat, "lng": mid_lng},
+                        {"lat": to_coord[0], "lng": to_coord[1]},
+                    ],
+                    "buffer_meters": 100,
+                    "start_city": from_city,
+                    "end_city": to_city,
+                },
+                "description": f"{from_city}到{to_city}规划行驶路线",
+                "active": True,
+                "alert_level": "severe",
+                "tags": ["route", from_city, to_city],
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
+            })
+            fence_id += 1
+
+    # 新增：更多高速服务区
+    extra_service_areas = [
+        {"name": "G1高速服务区-沈阳", "city": "沈阳", "lat": 41.81, "lng": 123.43},
+        {"name": "G2高速服务区-南京", "city": "南京", "lat": 32.06, "lng": 118.80},
+        {"name": "G3高速服务区-合肥", "city": "合肥", "lat": 31.82, "lng": 117.23},
+        {"name": "G4高速服务区-长沙", "city": "长沙", "lat": 28.23, "lng": 112.94},
+        {"name": "G5高速服务区-西安", "city": "西安", "lat": 34.34, "lng": 108.94},
+        {"name": "G6高速服务区-成都", "city": "成都", "lat": 30.57, "lng": 104.07},
+        {"name": "G7高速服务区-兰州", "city": "兰州", "lat": 36.06, "lng": 103.83},
+        {"name": "G15高速服务区-杭州", "city": "杭州", "lat": 30.27, "lng": 120.16},
+        {"name": "G30高速服务区-乌鲁木齐", "city": "乌鲁木齐", "lat": 43.83, "lng": 87.62},
+        {"name": "G45高速服务区-南昌", "city": "南昌", "lat": 28.68, "lng": 115.86},
+        {"name": "G50高速服务区-重庆", "city": "重庆", "lat": 29.43, "lng": 106.91},
+        {"name": "G55高速服务区-太原", "city": "太原", "lat": 37.87, "lng": 112.55},
+        {"name": "G60高速服务区-贵阳", "city": "贵阳", "lat": 26.65, "lng": 106.63},
+        {"name": "G65高速服务区-南宁", "city": "南宁", "lat": 22.82, "lng": 108.37},
+        {"name": "G75高速服务区-海口", "city": "海口", "lat": 20.04, "lng": 110.20},
+    ]
+
+    for sa in extra_service_areas:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": sa["name"],
+            "fence_type": "circle",
+            "category": "service_area",
+            "data": {
+                "center": {"lat": sa["lat"], "lng": sa["lng"]},
+                "radius_meters": 500,
+            },
+            "description": f"{sa['name']}高速服务区",
+            "active": True,
+            "alert_level": "info",
+            "allowed_stay_minutes": 60,
+            "tags": ["service_area", sa["city"]],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    # 新增：更多禁行区/风险区
+    extra_forbidden = [
+        {"name": "深圳城区禁行区", "city": "深圳", "lat": 22.54, "lng": 114.06, "radius": 8500, "category": "forbidden"},
+        {"name": "成都城区禁行区", "city": "成都", "lat": 30.57, "lng": 104.07, "radius": 9000, "category": "forbidden"},
+        {"name": "武汉城区禁行区", "city": "武汉", "lat": 30.59, "lng": 114.31, "radius": 8500, "category": "forbidden"},
+        {"name": "高温暴晒区-重庆", "city": "重庆", "lat": 29.43, "lng": 106.91, "radius": 25000, "category": "high_temp"},
+        {"name": "高温暴晒区-武汉", "city": "武汉", "lat": 30.59, "lng": 114.31, "radius": 20000, "category": "high_temp"},
+        {"name": "偏远风险区-青藏高原", "city": "拉萨", "lat": 29.65, "lng": 91.10, "radius": 80000, "category": "forbidden"},
+        {"name": "偏远风险区-塔克拉玛干", "city": "和田", "lat": 37.07, "lng": 79.92, "radius": 100000, "category": "forbidden"},
+        {"name": "洪水风险区-长江流域", "city": "武汉", "lat": 30.59, "lng": 114.31, "radius": 30000, "category": "restricted"},
+        {"name": "冰雪风险区-东北地区", "city": "哈尔滨", "lat": 45.80, "lng": 126.54, "radius": 40000, "category": "restricted"},
+        {"name": "台风风险区-东南沿海", "city": "厦门", "lat": 24.48, "lng": 118.09, "radius": 35000, "category": "restricted"},
+    ]
+
+    for zone in extra_forbidden:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": zone["name"],
+            "fence_type": "circle",
+            "category": zone["category"],
+            "data": {
+                "center": {"lat": zone["lat"], "lng": zone["lng"]},
+                "radius_meters": zone["radius"],
+            },
+            "description": zone["name"],
+            "active": True,
+            "alert_level": "severe",
+            "allowed_stay_minutes": 0,
+            "tags": [zone["category"], zone["city"]],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    # 新增：检查点围栏
+    checkpoints = [
+        {"name": "北京入境检查点", "city": "北京", "lat": 39.90, "lng": 116.41},
+        {"name": "上海入境检查点", "city": "上海", "lat": 31.23, "lng": 121.47},
+        {"name": "广州入境检查点", "city": "广州", "lat": 23.13, "lng": 113.26},
+        {"name": "深圳入境检查点", "city": "深圳", "lat": 22.54, "lng": 114.06},
+        {"name": "成都入境检查点", "city": "成都", "lat": 30.57, "lng": 104.07},
+        {"name": "武汉入境检查点", "city": "武汉", "lat": 30.59, "lng": 114.31},
+        {"name": "西安入境检查点", "city": "西安", "lat": 34.34, "lng": 108.94},
+        {"name": "郑州入境检查点", "city": "郑州", "lat": 34.75, "lng": 113.63},
+        {"name": "南京入境检查点", "city": "南京", "lat": 32.06, "lng": 118.80},
+        {"name": "杭州入境检查点", "city": "杭州", "lat": 30.27, "lng": 120.16},
+    ]
+
+    for cp in checkpoints:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": cp["name"],
+            "fence_type": "circle",
+            "category": "checkpoint",
+            "data": {
+                "center": {"lat": cp["lat"], "lng": cp["lng"]},
+                "radius_meters": 200,
+            },
+            "description": f"{cp['name']}冷链检查点",
+            "active": True,
+            "alert_level": "warning",
+            "allowed_stay_minutes": 30,
+            "tags": ["checkpoint", cp["city"]],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    # 新增：枢纽冷仓围栏
+    hub_warehouses = [
+        {"name": "京津冀枢纽冷仓", "city": "北京", "lat": 39.72, "lng": 116.33},
+        {"name": "长三角枢纽冷仓", "city": "上海", "lat": 31.38, "lng": 121.25},
+        {"name": "珠三角枢纽冷仓", "city": "广州", "lat": 23.17, "lng": 113.27},
+        {"name": "成渝枢纽冷仓", "city": "成都", "lat": 30.57, "lng": 104.27},
+        {"name": "长江中游枢纽冷仓", "city": "武汉", "lat": 30.62, "lng": 114.13},
+    ]
+
+    for hub in hub_warehouses:
+        fences.append({
+            "fence_id": f"FENCE-{fence_id:04d}",
+            "name": f"{hub['name']}围栏",
+            "fence_type": "circle",
+            "category": "hub",
+            "data": {
+                "center": {"lat": hub["lat"], "lng": hub["lng"]},
+                "radius_meters": 800,
+            },
+            "description": f"{hub['name']}地理围栏",
+            "active": True,
+            "alert_level": "normal",
+            "allowed_stay_minutes": 180,
+            "tags": ["hub", hub["city"]],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+        fence_id += 1
+
+    # 新增：更多城市围栏
+    for city_name, (lat, lng) in list(CITY_COORDS.items())[15:]:
         fences.append({
             "fence_id": f"FENCE-{fence_id:04d}",
             "name": f"{city_name}城市围栏",

@@ -63,6 +63,8 @@ export const alertAPI = {
   getActiveAlerts: () => api.get('/alerts/active'),
   acknowledge: (alertId: string, action?: string, notes?: string) =>
     api.post(`/alerts/acknowledge/${alertId}`, null, { params: { action, notes } }),
+  resolve: (alertId: string, resolution?: string, notes?: string) =>
+    api.post(`/alerts/resolve/${alertId}`, null, { params: { resolution, notes } }),
   dispatch: (alertId: string, channels?: string[]) =>
     api.post(`/alerts/dispatch/${alertId}`, { notify_channels: channels || ['sms', 'email'] }),
   getNotifications: (params?: any) => api.get('/alerts/notifications', { params }),
@@ -70,8 +72,18 @@ export const alertAPI = {
   getRules: () => api.get('/alerts/rules'),
   createRule: (rule: any) => api.post('/alerts/rules', rule),
   deleteRule: (ruleType: string) => api.delete(`/alerts/rules/${ruleType}`),
-  // 🔴 P0: 司机专属告警
   getDriverAlerts: (params?: any) => api.get('/alerts/driver', { params }),
+  getNormalAlerts: () => api.get('/alerts/level/normal'),
+  getSevereAlerts: () => api.get('/alerts/level/severe'),
+  getCriticalAlerts: () => api.get('/alerts/level/critical'),
+  getAlertTypes: () => api.get('/alerts/config/types'),
+  getSeverityConfig: () => api.get('/alerts/config/severity'),
+  // 应急预案管理
+  getEmergencyPlans: (params?: any) => api.get('/alerts/emergency/plans', { params }),
+  getEmergencyPlanDetail: (planId: string) => api.get(`/alerts/emergency/plan/${planId}`),
+  triggerEmergencyPlan: (alertId: string) => api.post(`/alerts/emergency/trigger/${alertId}`),
+  updateEmergencyStep: (planId: string, stepNum: number, status: string, notes?: string) =>
+    api.post(`/alerts/emergency/plan/${planId}/step/${stepNum}`, null, { params: { status, notes } }),
 }
 
 export const geofenceAPI = {
@@ -98,22 +110,35 @@ export const traceabilityAPI = {
   search: (keyword: string, params?: any) =>
     api.get('/traceability/search', { params: { keyword, ...params } }),
   getStats: () => api.get('/traceability/stats'),
-  verifyBlockchain: (waybillId: string) => api.get(`/traceability/blockchain/verify/${waybillId}`),
+  verifyBlockchain: (traceCode: string) => api.get(`/traceability/blockchain/verify/${traceCode}`),
   getLedger: (limit?: number) => api.get('/traceability/blockchain/ledger', { params: { limit } }),
   // 运单管理
   getWaybills: (refresh?: boolean) => api.get('/traceability/waybills', { params: { refresh } }),
-  createWaybill: (data: any) => api.post('/traceability/waybill', data),
+  createWaybill: (data: any) => api.post('/traceability/data', data),
   getWaybillDetail: (waybillId: string) => api.get(`/traceability/waybill/${waybillId}`),
+  // 追溯数据管理
+  getTraceData: (traceCode: string) => api.get(`/traceability/data/${traceCode}`),
+  addRecord: (traceCode: string, record: any) => api.post(`/traceability/record`, null, { params: { trace_code: traceCode, record } }),
+  addBatchRecords: (traceCode: string, records: any[]) => api.post(`/traceability/record/batch`, records, { params: { trace_code: traceCode } }),
+  getAllTraces: (status?: string, limit?: number) => api.get('/traceability/all', { params: { status, limit } }),
+  // 消费者公开查询（无需登录）
+  publicQuery: (traceCode: string) => axios.get(`/api/v1/traceability/public/${traceCode}`).then(r => r.data),
+  publicQueryHtml: (traceCode: string) => axios.get(`/api/v1/traceability/public/${traceCode}/html`).then(r => r.data),
 }
 
 export const customerAPI = {
-  queryWaybill: (waybillId: string) => api.get(`/customer/query/${waybillId}`),
+  queryWaybill: (waybillId: string) => api.get('/customer/query', { params: { waybill_id: waybillId } }),
   getTemperatureCurve: (waybillId: string, params?: any) =>
-    api.get(`/customer/temperature-curve/${waybillId}`, { params }),
-  getCertificate: (waybillId: string) =>
-    api.get(`/customer/certificate/${waybillId}`),
-  getMyOrders: () => api.get('/customer/my-orders'),
-  scanQuery: (code: string) => api.get('/customer/scan', { params: { code } }),
+    api.get('/customer/query/temperature-curve', { params: { waybill_id: waybillId, ...params } }),
+  getCertificate: (waybillId: string, format?: string, version?: string) =>
+    api.get('/customer/certificate', { params: { waybill_id: waybillId, format, version } }),
+  getMyOrders: (params?: any) => api.get('/customer/my-orders', { params }),
+  verifyBlockchain: (waybillId: string) => api.get('/customer/verify', { params: { waybill_id: waybillId } }),
+  miniQuery: (code: string) => api.get('/customer/mini/query', { params: { code } }),
+  getWaybillAlerts: (waybillId: string) => api.get('/customer/alerts', { params: { waybill_id: waybillId } }),
+  getOrderTracking: (waybillId: string) => api.get('/customer/tracking', { params: { waybill_id: waybillId } }),
+  batchCertificates: (waybillIds: string[], format?: string) =>
+    api.get('/customer/batch/certificates', { params: { waybill_ids: waybillIds.join(','), format } }),
   // 顾客下单
   createOrder: (data: any) => api.post('/customer/create-order', data),
   getMyOrdersNew: () => api.get('/customer/my-orders-new'),
@@ -178,6 +203,9 @@ export const dispatchAPI = {
   autoAssign: () => api.post('/dispatch/assign'),
   getPlan: () => api.get('/dispatch/plan'),
   getStats: () => api.get('/dispatch/stats'),
+  confirmDispatch: (assignmentId: string) => api.post(`/dispatch/dispatch/${assignmentId}/confirm`),
+  monitor: (assignmentId: string) => api.get(`/dispatch/monitor/${assignmentId}`),
+  getCargoZoneMap: () => api.get('/dispatch/cargo-zone-map'),
 }
 
 export const qualityAPI = {
@@ -218,14 +246,37 @@ export const uploadAPI = {
     api.post('/upload/review/batch', { record_ids: recordIds, action, notes: notes || '' }),
 }
 
+export const driverAPI = {
+  getDashboard: () => api.get('/driver/dashboard'),
+  getDoorStatus: () => api.get('/driver/door-status'),
+  getDeliveryProgress: (waybillId?: string) => api.get('/driver/delivery-progress', { params: { waybill_id: waybillId } }),
+  getAlerts: (limit?: number, severity?: string) => api.get('/driver/alerts', { params: { limit, severity } }),
+  handleAlert: (alertId: string, action: string, notes?: string) =>
+    api.post(`/driver/alerts/${alertId}/handle`, { action, notes }),
+  uploadRecord: (formData: FormData) =>
+    api.post('/driver/upload-record', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 30000,
+    }),
+  getUploadHistory: (waybillId?: string, limit?: number) =>
+    api.get('/driver/upload-history', { params: { waybill_id: waybillId, limit } }),
+  getWaybills: (status?: string, limit?: number) => api.get('/driver/waybills', { params: { status, limit } }),
+  getWaybillDetail: (waybillId: string) => api.get(`/driver/waybills/${waybillId}`),
+  getTracking: () => api.get('/driver/tracking'),
+}
+
 export const resourceAPI = {
   getWarehouses: () => api.get('/resources/warehouses'),
   getWarehouseDetail: (id: string) => api.get(`/resources/warehouses/${id}`),
   getVehicles: (status?: string) => api.get('/resources/vehicles', { params: { status } }),
   getColdPlates: () => api.get('/resources/cold-plates'),
   getUtilization: () => api.get('/resources/utilization'),
-  allocate: (resourceType: string, warehouseId?: string) =>
-    api.post('/resources/allocate', null, { params: { resource_type: resourceType, warehouse_id: warehouseId } }),
+  // 智能资源分配
+  allocateAll: (data: any) => api.post('/resources/allocate-all', data),
+  releaseAllocation: (allocationId: string) => api.post(`/resources/release-allocation/${allocationId}`),
+  getForecast: (hoursAhead?: number) => api.get('/resources/forecast', { params: { hours_ahead: hoursAhead } }),
+  getLocks: () => api.get('/resources/locks'),
+  releaseLock: (lockId: string) => api.post(`/resources/lock/${lockId}/release`),
   // 仓库库存管理
   getWarehouseInventory: (params?: any) => api.get('/resources/warehouse-inventory', { params }),
   warehouseInbound: (data: any) => api.post('/resources/warehouse-inbound', data),

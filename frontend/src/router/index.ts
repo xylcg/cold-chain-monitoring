@@ -25,6 +25,12 @@ const router = createRouter({
       component: () => import('@/views/CustomerOrders.vue'),
       meta: { title: '冷链配送', roles: ['customer'] },
     },
+    {
+      path: '/public/trace/:traceCode',
+      name: 'PublicTraceQuery',
+      component: () => import('@/views/CustomerQuery.vue'),
+      meta: { title: '冷链溯源查询', public: true },
+    },
     // ===== PC 端页面（MainLayout 布局，仅 admin/warehouse）=====
     {
       path: '/',
@@ -85,7 +91,7 @@ const router = createRouter({
           meta: { title: '冷链追溯', roles: ['admin', 'warehouse'] },
         },
         {
-          path: 'customer',
+          path: '/customer',
           name: 'CustomerQuery',
           component: () => import('@/views/CustomerQuery.vue'),
           meta: { title: '客户查询', roles: ['admin', 'warehouse'] },
@@ -147,6 +153,11 @@ router.beforeEach((to, _from, next) => {
   const isDriver = userRole === 'driver'
   const isCustomer = userRole === 'customer'
   const homePath = isDriver ? '/driver-app' : isCustomer ? '/customer-app' : '/dashboard'
+
+  // 公开页面无需校验（消费者扫码查询）
+  if (to.meta.public) {
+    return next()
+  }
 
   // 登录页无需校验
   if (to.path === '/login') {

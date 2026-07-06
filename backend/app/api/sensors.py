@@ -1,6 +1,7 @@
 """
 传感器数据接入 API
 模块1: 多传感器数据采集
+联动追溯链：传感器数据自动写入全程冷链追溯链
 """
 import json
 from datetime import datetime
@@ -16,6 +17,8 @@ from ..services.redis_service import redis_service
 from ..services.alert_engine import alert_engine
 from ..services.websocket_manager import ws_manager
 from ..core.security import verify_device_token
+from ..api.traceability import auto_add_sensor_record, WAYBILL_TRACE_MAP
+from ..api.resources import MULTI_ZONE_VEHICLES, COLD_PLATES, _unlock_resource, RESOURCE_LOCKS
 
 router = APIRouter(prefix="/api/v1/sensors", tags=["传感器数据"])
 
@@ -37,7 +40,7 @@ async def receive_sensor_data(
 ):
     """
     接收传感器上报数据
-    处理流程: 数据验证 → Kafka 写入 → Redis 缓存 → TDengine 存储 → 异常检测 → 告警 → WebSocket 推送
+    处理流程: 数据验证 → Kafka 写入 → Redis 缓存 → TDengine 存储 → 异常检测 → 告警 → WebSocket 推送 → 追溯链写入
     """
     data_dict = data.model_dump()
     data_dict["timestamp"] = data_dict["timestamp"].isoformat()
@@ -73,6 +76,48 @@ async def receive_sensor_data(
 
     # 6. WebSocket 实时推送到订阅该设备的客户端
     await ws_manager.broadcast_device_data(data.device_id, data_dict)
+
+    # 7. 🚀 自动写入追溯链（联动冷链追溯模块）
+    # 尝试通过设备ID查找关联的运单号
+    waybill_id = ""
+    try:
+        for wb, tc in WAYBILL_TRACE_MAP.items():
+            if data.device_id in wb or data.device_id in tc:
+                waybill_id = wb
+                break
+        if waybill_id:
+            await auto_add_sensor_record(
+                device_id=data.device_id,
+                waybill_id=waybill_id,
+                temperature=data.temperature,
+                humidity=data.humidity,
+                latitude=data.latitude,
+                longitude=data.longitude,
+                door_status=data.door_status,
+                vehicle_speed=data.vehicle_speed,
+                cold_car_status=data.cold_car_status,
+                user={"sub": "system", "role": "admin"},
+            )
+    except Exception as e:
+        logger.warning(f"追溯链写入失败: {e}")
+
+    # 8. 🚀 资源状态联动更新（联动资源调度模块）
+    # 当车辆速度为0且冷机关闭，自动释放车辆资源
+    try:
+        if data.device_type == "vehicle" and data.vehicle_speed == 0 and data.cold_car_status == 0:
+            for vehicle in MULTI_ZONE_VEHICLES:
+                if vehicle.get("device_id") == data.device_id and vehicle["status"] == "in_transit":
+                    vehicle["status"] = "idle"
+                    vehicle["current_task"] = ""
+                    
+                    for lock_id, lock_info in list(RESOURCE_LOCKS.items()):
+                        if lock_info["resource_id"] == vehicle["id"] and lock_info["resource_type"] == "vehicle":
+                            _unlock_resource(lock_id)
+                            logger.info(f"车辆 {vehicle['plate']} 自动释放资源")
+                            break
+                    break
+    except Exception as e:
+        logger.warning(f"资源状态更新失败: {e}")
 
     return {
         "status": "ok",

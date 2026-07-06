@@ -7,7 +7,7 @@
 import os
 import sys
 import numpy as np
-from typing import Optional
+from typing import Optional, List
 from loguru import logger
 from dataclasses import dataclass
 
@@ -50,9 +50,9 @@ class AnomalyDetectionResult:
 class TemperaturePredictionResult:
     device_id: str
     current_temperature: float
-    predictions: list[float]
-    confidence_upper: list[float]
-    confidence_lower: list[float]
+    predictions: List[float]
+    confidence_upper: List[float]
+    confidence_lower: List[float]
     risk_level: str
     method: str = "lstm_transformer"
 
@@ -153,11 +153,11 @@ def get_temperature_predictor():
 
 async def detect_anomaly(
     device_id: str,
-    window_data: list[float],
-    humidity_data: Optional[list[float]] = None,
-    door_data: Optional[list[float]] = None,
-    vibration_data: Optional[list[float]] = None,
-    external_temp_data: Optional[list[float]] = None,
+    window_data: List[float],
+    humidity_data: Optional[List[float]] = None,
+    door_data: Optional[List[float]] = None,
+    vibration_data: Optional[List[float]] = None,
+    external_temp_data: Optional[List[float]] = None,
 ) -> AnomalyDetectionResult:
     """
     使用深度学习模型检测温度异常
@@ -221,7 +221,7 @@ async def detect_anomaly(
     return _statistical_anomaly_detect(device_id, window_data)
 
 
-def _statistical_anomaly_detect(device_id: str, window_data: list[float]) -> AnomalyDetectionResult:
+def _statistical_anomaly_detect(device_id: str, window_data: List[float]) -> AnomalyDetectionResult:
     """统计方法异常检测（降级方案）"""
     from datetime import datetime
 
@@ -251,12 +251,12 @@ def _statistical_anomaly_detect(device_id: str, window_data: list[float]) -> Ano
 
 async def predict_temperature_trend(
     device_id: str,
-    window_data: list[float],
-    humidity_data: Optional[list[float]] = None,
-    door_data: Optional[list[float]] = None,
-    vibration_data: Optional[list[float]] = None,
-    external_temp_data: Optional[list[float]] = None,
-    cooling_power_data: Optional[list[float]] = None,
+    window_data: List[float],
+    humidity_data: Optional[List[float]] = None,
+    door_data: Optional[List[float]] = None,
+    vibration_data: Optional[List[float]] = None,
+    external_temp_data: Optional[List[float]] = None,
+    cooling_power_data: Optional[List[float]] = None,
 ) -> TemperaturePredictionResult:
     """
     使用深度学习模型预测温度趋势
@@ -329,7 +329,7 @@ async def predict_temperature_trend(
     return _linear_extrapolation(device_id, window_data)
 
 
-def _linear_extrapolation(device_id: str, window_data: list[float]) -> TemperaturePredictionResult:
+def _linear_extrapolation(device_id: str, window_data: List[float]) -> TemperaturePredictionResult:
     """线性外推预测（降级方案）"""
     if len(window_data) < 10:
         return TemperaturePredictionResult(

@@ -3,7 +3,7 @@ Kafka 服务 - 生产者与消费者
 """
 import json
 import asyncio
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 from kafka import KafkaProducer, KafkaConsumer
 from loguru import logger
 from ..core.config import get_settings
@@ -16,7 +16,7 @@ class KafkaService:
 
     def __init__(self):
         self._producer: Optional[KafkaProducer] = None
-        self._consumers: list[KafkaConsumer] = []
+        self._consumers: List[KafkaConsumer] = []
 
     @property
     def producer(self) -> KafkaProducer:

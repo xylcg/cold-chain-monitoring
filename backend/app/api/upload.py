@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, Query, Depends
 from fastapi.responses import JSONResponse
+from typing import List
 from pydantic import BaseModel
 from loguru import logger
 
@@ -254,7 +255,7 @@ async def review_photo(
 
 # ====== 🔴 P0: 批量审核照片 ======
 class BatchReviewRequest(BaseModel):
-    record_ids: list[str]
+    record_ids: List[str]
     action: str  # "approve" 或 "reject"
     notes: str = ""
 

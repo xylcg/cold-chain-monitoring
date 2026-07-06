@@ -1,0 +1,16 @@
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 310 modules transformed.
+[31mx[39m Build failed in 964ms
+[31merror during build:
+[31m[vite-plugin-pwa:build] There was an error during the build:
+  [plugin vite:vue] ../../../../../../../C:/Users/唐辉/Desktop/新建文件夹 (2)/11111/frontend/src/views/MobileApp.vue (763:1): Element is missing end tag.
+Additionally, handling the error in the 'buildEnd' hook caused the following error:
+  [plugin vite:vue] ../../../../../../../C:/Users/唐辉/Desktop/新建文件夹 (2)/11111/frontend/src/views/MobileApp.vue (763:1): Element is missing end tag.[31m
+file: [36mC:/Users/唐辉/Desktop/新建文件夹 (2)/11111/frontend/src/views/MobileApp.vue:763:1[31m
+    at getRollupError (file:///c:/Users/%E5%94%90%E8%BE%89/Desktop/%E6%96%B0%E5%BB%BA%E6%96%87%E4%BB%B6%E5%A4%B9%20(2)/11111/frontend/node_modules/rollup/dist/es/shared/parseAst.js:406:41)
+    at file:///c:/Users/%E5%94%90%E8%BE%89/Desktop/%E6%96%B0%E5%BB%BA%E6%96%87%E4%BB%B6%E5%A4%B9%20(2)/11111/frontend/node_modules/rollup/dist/es/shared/node-entry.js:23884:39
+    at async catchUnfinishedHookActions (file:///c:/Users/%E5%94%90%E8%BE%89/Desktop/%E6%96%B0%E5%BB%BA%E6%96%87%E4%BB%B6%E5%A4%B9%20(2)/11111/frontend/node_modules/rollup/dist/es/shared/node-entry.js:23342:16)
+    at async rollupInternal (file:///c:/Users/%E5%94%90%E8%BE%89/Desktop/%E6%96%B0%E5%BB%BA%E6%96%87%E4%BB%B6%E5%A4%B9%20(2)/11111/frontend/node_modules/rollup/dist/es/shared/node-entry.js:23867:5)
+    at async build (file:///c:/Users/%E5%94%90%E8%BE%89/Desktop/%E6%96%B0%E5%BB%BA%E6%96%87%E4%BB%B6%E5%A4%B9%20(2)/11111/frontend/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:65709:14)
+    at async CAC.<anonymous> (file:///c:/Users/%E5%94%90%E8%BE%89/Desktop/%E6%96%B0%E5%BB%BA%E6%96%87%E4%BB%B6%E5%A4%B9%20(2)/11111/frontend/node_modules/vite/dist/node/cli.js:829:5)[39m

@@ -4,7 +4,7 @@ WebSocket 连接管理器
 """
 import json
 import asyncio
-from typing import Optional
+from typing import Optional, Dict, List
 from fastapi import WebSocket, WebSocketDisconnect
 from loguru import logger
 
@@ -14,16 +14,16 @@ class ConnectionManager:
 
     def __init__(self):
         # 设备频道: device_id -> [websocket, ...]
-        self.device_connections: dict[str, list[WebSocket]] = {}
+        self.device_connections: Dict[str, List[WebSocket]] = {}
         # 告警频道: user_role -> [websocket, ...]
-        self.alert_connections: dict[str, list[WebSocket]] = {
+        self.alert_connections: Dict[str, List[WebSocket]] = {
             "driver": [],
             "manager": [],
             "repair": [],
             "customer": [],
         }
         # 所有连接
-        self.all_connections: list[WebSocket] = []
+        self.all_connections: List[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
         """接受 WebSocket 连接"""

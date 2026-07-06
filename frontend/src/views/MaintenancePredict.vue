@@ -186,10 +186,10 @@ async function refreshAll() {
     const res: any = await maintenanceAPI.predictAll(filterRisk.value || undefined)
     predictions.value = res.predictions || []
     stats.total = res.total_devices || 0
-    stats.critical = res.summary.critical_high || 0
-    stats.high = res.summary.critical_high || 0
-    stats.medium = res.summary.medium || 0
-    stats.low = res.summary.low || 0
+    stats.critical = res.summary?.critical_high || 0
+    stats.high = res.summary?.high || 0
+    stats.medium = res.summary?.medium || 0
+    stats.low = res.summary?.low || 0
   } catch {
     ElMessage.error('获取预测数据失败')
   } finally {

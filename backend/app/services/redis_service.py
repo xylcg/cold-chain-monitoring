@@ -6,7 +6,7 @@ import asyncio
 import json
 import time
 import redis.asyncio as aioredis
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict, Set, Callable
 from loguru import logger
 from ..core.config import get_settings
 
@@ -20,11 +20,11 @@ class _MemoryStore:
     """内存数据存储（Redis 不可用时的 fallback）"""
 
     def __init__(self):
-        self._data: dict[str, Any] = {}       # key -> value (string)
-        self._hashes: dict[str, dict] = {}     # key -> {field: value}
-        self._sets: dict[str, set] = {}        # key -> set()
-        self._lists:dict[str, list] = {}       # key -> []
-        self._expiry: dict[str, float] = {}    # key -> expiry timestamp
+        self._data: Dict[str, Any] = {}       # key -> value (string)
+        self._hashes: Dict[str, Dict] = {}     # key -> {field: value}
+        self._sets: Dict[str, Set] = {}        # key -> set()
+        self._lists: Dict[str, List] = {}       # key -> []
+        self._expiry: Dict[str, float] = {}    # key -> expiry timestamp
 
     def _cleanup(self):
         """清理过期键"""
@@ -140,7 +140,7 @@ class _MemoryStore:
     class _Pipeline:
         def __init__(self, store: '_MemoryStore'):
             self._store = store
-            self._ops: list[callable] = []
+            self._ops: List[Callable] = []
 
         def rpush(self, key, *v):
             self._ops.append(lambda k=key, v=v: self._store.rpush(k, *v))
@@ -302,7 +302,7 @@ class RedisService:
             pipe.expire(key, 300)
             await pipe.execute()
 
-    async def get_temperature_window(self, device_id: str) -> list[float]:
+    async def get_temperature_window(self, device_id: str) -> List[float]:
         key = f"temp:window:{device_id}"
         store = self._mem_or_redis()
         data = await store.lrange(key, 0, -1)

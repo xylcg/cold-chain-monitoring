@@ -5,6 +5,7 @@
 """
 import numpy as np
 from datetime import datetime, timedelta
+from typing import List
 from fastapi import APIRouter, Depends
 
 from ..core.security import require_role
@@ -16,7 +17,7 @@ from ..schemas import TEMP_THRESHOLD
 router = APIRouter(prefix="/api/v1/temperature", tags=["温度监控"])
 
 # 模拟历史数据生成（当真实数据不足时补充）
-def _generate_fallback_history(current_temp: float = 4.0, n_points: int = 60) -> list[float]:
+def _generate_fallback_history(current_temp: float = 4.0, n_points: int = 60) -> List[float]:
     """基于当前温度生成合理的冷链温度历史数据"""
     np.random.seed(42)
     data = []

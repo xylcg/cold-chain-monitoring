@@ -1,7 +1,7 @@
 """
 冷链电子围栏管理 API
 支持4种围栏类型：圆形点围栏、带状线路围栏、多边形围栏、行政城市围栏
-联动：路线规划、设备心跳、温控数据、中转分拨
+联动：路线规划、设备心跳、温控数据、中转分拨、追溯链
 """
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -24,6 +24,8 @@ from ..services.fence_event_processor import (
     get_alerts_by_level, get_vehicle_state, update_vehicle_state
 )
 from ..services.world_state import get_world_state, CITY_COORDS
+from ..api.traceability import auto_add_geofence_record, WAYBILL_TRACE_MAP
+from ..api.resources import MULTI_ZONE_VEHICLES, _unlock_resource, RESOURCE_LOCKS
 
 router = APIRouter(prefix="/api/v1/geofence", tags=["电子围栏"])
 
@@ -214,6 +216,54 @@ async def check_fence_event(
         heartbeat_time=heartbeat_time,
         city_coords=CITY_COORDS,
     )
+    
+    # 🚀 自动写入追溯链（联动冷链追溯模块）
+    # 当触发围栏事件时，自动记录到追溯链
+    try:
+        for event in events:
+            event_type = event.event_type.value if hasattr(event.event_type, 'value') else str(event.event_type)
+            
+            waybill_id = ""
+            for wb in WAYBILL_TRACE_MAP:
+                if vehicle_id in wb or plate_number in wb:
+                    waybill_id = wb
+                    break
+            
+            if waybill_id:
+                await auto_add_geofence_record(
+                    waybill_id=waybill_id,
+                    fence_name=event.fence_name,
+                    event_type=event_type,
+                    location=f"{event.city_section}" if hasattr(event, 'city_section') else "",
+                    temperature=temperature_c or 0.0,
+                    lat=lat,
+                    lng=lng,
+                    user={"sub": "system", "role": "admin"},
+                )
+    except Exception as e:
+        from loguru import logger
+        logger.warning(f"围栏事件写入追溯链失败: {e}")
+    
+    # 🚀 资源状态联动更新（联动资源调度模块）
+    # 当车辆进入仓库围栏时，自动更新车辆状态
+    try:
+        for event in events:
+            event_type = event.event_type.value if hasattr(event.event_type, 'value') else str(event.event_type)
+            if event_type == "enter" and hasattr(event, 'fence_name') and "仓库" in event.fence_name:
+                for vehicle in MULTI_ZONE_VEHICLES:
+                    if vehicle["id"] == vehicle_id or vehicle["plate"] == plate_number:
+                        vehicle["status"] = "idle"
+                        vehicle["current_task"] = ""
+                        vehicle["location"] = event.fence_name
+                        
+                        for lock_id, lock_info in list(RESOURCE_LOCKS.items()):
+                            if lock_info["resource_id"] == vehicle["id"] and lock_info["resource_type"] == "vehicle":
+                                _unlock_resource(lock_id)
+                                break
+                        break
+    except Exception as e:
+        from loguru import logger
+        logger.warning(f"围栏事件更新资源状态失败: {e}")
     
     return {
         "vehicle_id": vehicle_id,
