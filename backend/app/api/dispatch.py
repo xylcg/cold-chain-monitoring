@@ -32,15 +32,24 @@ TEMP_ZONES = {
 
 # ==================== 货物类型与温区映射（统一） ====================
 CARGO_ZONE_MAP = {
+    # 冷冻区 (-18°C)
     "冷冻牛肉": "frozen", "冷冻海鲜": "frozen", "冰淇淋": "frozen", "冷冻预制菜": "frozen",
     "冷冻肉类": "frozen", "速冻食品": "frozen", "冷冻食品": "frozen", "冷冻水产": "frozen",
+    "冷冻猪肉": "frozen", "冷冻禽肉": "frozen", "冻品": "frozen", "冰激凌": "frozen",
+    "速冻水饺": "frozen", "速冻汤圆": "frozen", "冷冻蔬菜": "frozen",
+    # 冷藏区 (2~4°C)
     "冷藏乳制品": "refrigerated", "冷藏水果": "refrigerated", "新鲜蔬菜": "refrigerated",
     "冷藏鲜奶": "refrigerated", "水果": "refrigerated", "蔬菜": "refrigerated",
     "鲜花": "refrigerated", "冷藏生鲜": "refrigerated", "鲜肉": "refrigerated",
     "海鲜": "refrigerated", "鲜奶": "refrigerated", "高端鲜果": "refrigerated",
+    "鲜鸡蛋": "refrigerated", "酸奶": "refrigerated", "豆制品": "refrigerated",
+    "冷鲜肉": "refrigerated", "淡水鱼": "refrigerated", "啤酒饮料": "refrigerated",
+    # 恒温区 (15~25°C)
     "恒温药品": "ambient", "巧克力": "ambient", "常温零食": "ambient",
+    # 医药/疫苗类（专用冷藏 2~8°C）
     "疫苗试剂": "refrigerated", "生物试剂": "refrigerated", "疫苗": "refrigerated",
     "疫苗医药": "refrigerated", "医用试剂": "refrigerated", "医药试剂": "refrigerated",
+    "诊断试剂": "refrigerated", "血液制品": "refrigerated", "胰岛素": "refrigerated",
 }
 
 # ==================== 高敏货物（强制隔离机制） ====================
@@ -58,8 +67,8 @@ MULTI_ZONE_VEHICLES = [
             "refrigerated": {"capacity_kg": 4000, "capacity_m3": 19},
         },
         "total_capacity_kg": 8000, "total_capacity_m3": 35,
-        "fuel_type": "diesel", "fuel_consumption": 28, "status": "idle",
-        "current_city": "北京", "driver": "张师傅", "driver_phone": "138****8801",
+        "fuel_type": "diesel", "fuel_consumption": 28, "status": "in_transit",
+        "current_city": "北京→天津", "driver": "张师傅", "driver_phone": "138****8801",
     },
     {
         "id": "VEH-MZ02", "plate": "冷A-8802", "model": "东风天锦KR三温区",
@@ -70,8 +79,8 @@ MULTI_ZONE_VEHICLES = [
             "ambient": {"capacity_kg": 2500, "capacity_m3": 12},
         },
         "total_capacity_kg": 10000, "total_capacity_m3": 42,
-        "fuel_type": "diesel", "fuel_consumption": 32, "status": "idle",
-        "current_city": "上海", "driver": "李师傅", "driver_phone": "138****8802",
+        "fuel_type": "diesel", "fuel_consumption": 32, "status": "in_transit",
+        "current_city": "上海→杭州", "driver": "李师傅", "driver_phone": "138****8802",
     },
     {
         "id": "VEH-MZ03", "plate": "冷A-8803", "model": "重汽豪沃TX双温区",
@@ -104,8 +113,8 @@ MULTI_ZONE_VEHICLES = [
             "ambient": {"capacity_kg": 2000, "capacity_m3": 10},
         },
         "total_capacity_kg": 9000, "total_capacity_m3": 40,
-        "fuel_type": "diesel", "fuel_consumption": 30, "status": "idle",
-        "current_city": "武汉", "driver": "钱师傅", "driver_phone": "138****8805",
+        "fuel_type": "diesel", "fuel_consumption": 30, "status": "maintenance",
+        "current_city": "武汉(维修厂)", "driver": "钱师傅", "driver_phone": "138****8805",
     },
     {
         "id": "VEH-MZ06", "plate": "冷A-8806", "model": "东风多利卡D9单冷冻区",
@@ -124,8 +133,8 @@ MULTI_ZONE_VEHICLES = [
             "refrigerated": {"capacity_kg": 5000, "capacity_m3": 24},
         },
         "total_capacity_kg": 5000, "total_capacity_m3": 24,
-        "fuel_type": "diesel", "fuel_consumption": 22, "status": "loading",
-        "current_city": "上海", "driver": "周师傅", "driver_phone": "138****8807",
+        "fuel_type": "diesel", "fuel_consumption": 22, "status": "in_transit",
+        "current_city": "深圳→广州", "driver": "周师傅", "driver_phone": "138****8807",
     },
     {
         "id": "VEH-MZ08", "plate": "冷A-8808", "model": "福田欧曼GTL三温区",
@@ -204,37 +213,64 @@ def _resolve_priority(cargo_name: str, order: dict) -> str:
 
 
 def _generate_demo_orders() -> list:
-    """生成演示订单（当无真实订单时补充）"""
-    random.seed(int(datetime.utcnow().timestamp()) // 30)
+    """生成演示订单（当无真实订单时补充）—— 使用固定种子保证数据稳定合理"""
+    # 固定种子：每次生成相同的数据集，便于演示
+    random.seed(20260707)
     orders = []
-    customers = ["永辉超市", "盒马鲜生", "叮咚买菜", "美团优选", "华润万家",
-                 "山姆会员店", "大润发", "物美超市", "沃尔玛", "京东超市",
-                 "老百姓大药房", "国大药房", "海王星辰"]
-    cargo_pool = list(CARGO_ZONE_MAP.keys())
-    cities = ["北京", "上海", "广州", "深圳", "杭州", "武汉", "成都", "重庆", "南京", "西安"]
+    
+    # 精心设计的订单列表（覆盖3种温区、含高敏货物、重量梯度合理）
+    demo_order_specs = [
+        # 冷冻区订单（8单）
+        {"cargo": "冷冻牛肉", "customer": "永辉超市", "origin": "北京", "dest": "上海", "weight": 3200, "priority": "high"},
+        {"cargo": "冷冻海鲜", "customer": "盒马鲜生", "origin": "广州", "dest": "成都", "weight": 2800, "priority": "normal"},
+        {"cargo": "冰淇淋", "customer": "叮咚买菜", "origin": "上海", "dest": "武汉", "weight": 800, "priority": "normal"},
+        {"cargo": "冷冻预制菜", "customer": "美团优选", "origin": "深圳", "dest": "杭州", "weight": 2500, "priority": "high"},
+        {"cargo": "速冻食品", "customer": "华润万家", "origin": "北京", "dest": "南京", "weight": 1500, "priority": "normal"},
+        {"cargo": "冷冻水产", "customer": "山姆会员店", "origin": "青岛", "dest": "西安", "weight": 3500, "priority": "high"},
+        {"cargo": "冷冻猪肉", "customer": "大润发", "origin": "郑州", "dest": "长沙", "weight": 2100, "priority": "normal"},
+        {"cargo": "冷冻蔬菜", "customer": "沃尔玛", "origin": "济南", "dest": "重庆", "weight": 1200, "priority": "normal"},
+        
+        # 冷藏区订单（7单）
+        {"cargo": "冷藏乳制品", "customer": "永辉超市", "origin": "呼和浩特", "dest": "北京", "weight": 1800, "priority": "high"},
+        {"cargo": "新鲜蔬菜", "customer": "盒马鲜生", "origin": "寿光", "dest": "上海", "weight": 2200, "priority": "urgent"},
+        {"cargo": "鲜花", "customer": "花加科技", "origin": "昆明", "dest": "北京", "weight": 600, "priority": "high"},
+        {"cargo": "鲜肉", "customer": "叮咚买菜", "origin": "临沂", "dest": "南京", "weight": 1900, "priority": "normal"},
+        {"cargo": "高端鲜果", "customer": "华润万家", "origin": "三亚", "dest": "天津", "weight": 1400, "priority": "high"},
+        {"cargo": "海鲜", "customer": "山姆会员店", "origin": "舟山", "dest": "武汉", "weight": 2600, "priority": "normal"},
+        {"cargo": "鲜奶", "customer": "大润发", "origin": "呼伦贝尔", "dest": "广州", "weight": 4000, "priority": "urgent"},
+        
+        # 恒温区订单（2单）
+        {"cargo": "巧克力", "customer": "沃尔玛", "origin": "上海", "dest": "重庆", "weight": 900, "priority": "normal"},
+        {"cargo": "常温零食", "customer": "京东超市", "origin": "东莞", "dest": "北京", "weight": 1600, "priority": "normal"},
+        
+        # 高敏医药类订单（3单，需要隔离运输）
+        {"cargo": "疫苗试剂", "customer": "老百姓大药房", "origin": "北京", "dest": "兰州", "weight": 350, "priority": "urgent"},
+        {"cargo": "医用试剂", "customer": "国大药房", "origin": "上海", "dest": "昆明", "weight": 420, "priority": "urgent"},
+        {"cargo": "生物试剂", "customer": "海王星辰", "origin": "广州", "dest": "沈阳", "weight": 280, "priority": "urgent"},
+    ]
 
-    for i in range(1, 19):
-        cargo_name = random.choice(cargo_pool)
-        zone = CARGO_ZONE_MAP[cargo_name]
+    for i, spec in enumerate(demo_order_specs):
+        cargo_name = spec["cargo"]
+        zone = CARGO_ZONE_MAP.get(cargo_name, "refrigerated")
         zone_info = TEMP_ZONES[zone]
-        weight = random.randint(300, 4500)
-        volume = round(weight * random.uniform(0.001, 0.003), 2)
+        weight = spec["weight"] + random.randint(-100, 100)  # 小幅随机波动
+        volume = round(weight * random.uniform(0.0015, 0.0028), 2)
         is_high = cargo_name in HIGH_SENSITIVITY_CARGO
         orders.append({
-            "order_id": f"ORD-DISP-{i:04d}",
-            "customer": random.choice(customers),
+            "order_id": f"ORD-DISP-{i+1:04d}",
+            "customer": spec["customer"],
             "cargo_type": cargo_name,
             "cargo_category": "",
             "temp_zone": zone,
             "zone_name": zone_info["name"],
             "temp_range": zone_info["range"],
             "target_temp_c": zone_info["target"],
-            "weight_kg": weight,
+            "weight_kg": max(200, weight),
             "volume_m3": volume,
-            "origin": random.choice(cities),
-            "destination": random.choice([c for c in cities if not orders or c != orders[-1]["origin"]]),
-            "deadline": (datetime.utcnow() + timedelta(hours=random.randint(2, 48))).isoformat(),
-            "priority": "urgent" if is_high else random.choice(["normal", "normal", "normal", "high"]),
+            "origin": spec["origin"],
+            "destination": spec["dest"],
+            "deadline": (datetime.utcnow() + timedelta(hours=random.randint(4, 36))).isoformat(),
+            "priority": spec["priority"],
             "is_high_sensitivity": is_high,
             "status": "pending",
             "source": "demo",
@@ -337,6 +373,50 @@ def _multi_objective_dispatch(orders: list, vehicles: list) -> dict:
     # ========== 容错检查：真实约束验证 ==========
     unassigned = [o for o in orders if o["order_id"] not in assigned_order_ids]
     
+    # 为每个未分配订单分析具体失败原因
+    def _analyze_unassign_reason(o: dict) -> str:
+        zone = o["zone_name"]
+        cargo = o["cargo_type"]
+        weight = o["weight_kg"]
+        is_hs = o.get("is_high_sensitivity", False)
+        
+        # 检查是否有支持该温区的空闲车辆
+        vehicles_with_zone = [v for v in idle_vehicles if zone in [
+            TEMP_ZONES[z]["name"] for z in v["zones"]
+        ] or o["temp_zone"] in v["zones"]]
+        
+        if not vehicles_with_zone:
+            return f"无{zone}车辆可用"
+        
+        # 检查容积
+        max_cap = max(v["compartments"].get(o["temp_zone"], {}).get("capacity_kg", 0) 
+                      for v in vehicles_with_zone) if vehicles_with_zone else 0
+        if weight > max_cap * 0.92:
+            return f"单件{weight}kg超最大舱位{int(max_cap)}kg"
+        
+        # 高敏隔离冲突
+        if is_hs:
+            # 检查是否有干净（未装普通货）的温区匹配车辆
+            clean_vehicles = [v for v in vehicles_with_zone 
+                             if not vehicle_usage[v["id"]]["orders"] or
+                             all(oo.get("is_high_sensitivity") for oo in vehicle_usage[v["id"]]["orders"])]
+            if not clean_vehicles:
+                return "高敏货物需独立车辆，当前无空闲隔离车"
+            return "高敏隔离约束，需专用车辆"
+        
+        # 已有其他货物占满该温区
+        zone_full_vehicles = [v for v in vehicles_with_zone
+                             if vehicle_usage[v["id"]]["weight_by_zone"].get(o["temp_zone"], 0) 
+                             >= v["compartments"].get(o["temp_zone"], {}).get("capacity_kg", 0) * 0.88]
+        if zone_full_vehicles:
+            return f"{zone}已满载"
+        
+        return "温区/容积不匹配"
+    
+    unassigned_details = [{"order_id": o["order_id"], "cargo_type": o["cargo_type"],
+                          "temp_zone": o["zone_name"],
+                          "reason": _analyze_unassign_reason(o)} for o in unassigned]
+    
     # 温区合规性检查：所有分配的订单温区都在车辆支持范围内
     temp_zone_compliant = True
     for a in assignments:
@@ -398,8 +478,7 @@ def _multi_objective_dispatch(orders: list, vehicles: list) -> dict:
         "unassigned": len(unassigned),
         "vehicles_used": len(assignments),
         "assignments": assignments,
-        "unassigned_orders": [{"order_id": o["order_id"], "cargo_type": o["cargo_type"],
-                                "reason": "无匹配温区车辆或容积超载"} for o in unassigned],
+        "unassigned_orders": unassigned_details,
         "fleet_utilization": round(len(assignments) / max(len(vehicles), 1) * 100, 1),
         "avg_capacity_utilization": avg_capacity,
         "cost_analysis": {
@@ -612,10 +691,13 @@ def _build_assignment(vehicle: dict, usage: dict) -> dict:
 
     # 舱位装载详情
     compartment_details = {}
+    used_zones = set()
     for zone in vehicle["zones"]:
         comp = vehicle["compartments"][zone]
         used_w = usage["weight_by_zone"].get(zone, 0)
         used_v = usage["volume_by_zone"].get(zone, 0)
+        if used_w > 0:
+            used_zones.add(zone)
         compartment_details[TEMP_ZONES[zone]["name"]] = {
             "zone_key": zone,
             "capacity_kg": comp["capacity_kg"],
@@ -632,6 +714,14 @@ def _build_assignment(vehicle: dict, usage: dict) -> dict:
     destinations = list(set(o["destination"] for o in usage["orders"]))
     origins = list(set(o["origin"] for o in usage["orders"]))
 
+    # 综合载率计算：
+    # - 如果只用了一部分温区，按"已使用温区总容量"算有效载率（更直观）
+    # - capacity_utilization: 按整车总容量（传统算法）
+    # - effective_utilization: 按已用温区容量之和（有效载率）
+    used_zone_total_cap = sum(vehicle["compartments"][z]["capacity_kg"] for z in used_zones)
+    effective_util = round(usage["total_weight"] / max(used_zone_total_cap, 1) * 100, 1) if used_zones else 0
+    overall_util = round(usage["total_weight"] / vehicle["total_capacity_kg"] * 100, 1)
+
     return {
         "assignment_id": f"ASGN-{vehicle['id'][-2:]}-{datetime.utcnow().strftime('%H%M%S')}",
         "vehicle_id": vehicle["id"],
@@ -647,7 +737,8 @@ def _build_assignment(vehicle: dict, usage: dict) -> dict:
         "order_count": len(usage["orders"]),
         "total_weight_kg": usage["total_weight"],
         "total_volume_m3": round(usage["total_volume"], 2),
-        "capacity_utilization": round(usage["total_weight"] / vehicle["total_capacity_kg"] * 100, 1),
+        "capacity_utilization": overall_util,
+        "effective_utilization": effective_util,
         "volume_utilization": round(usage["total_volume"] / vehicle["total_capacity_m3"] * 100, 1),
         "zone_distribution": zone_dist,
         "weight_by_zone": weight_by_zone,

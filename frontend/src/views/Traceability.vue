@@ -301,12 +301,10 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showQRCode" title="溯源二维码" width="400px">
+    <el-dialog v-model="showQRCode" title="溯源二维码" width="400px" @open="generateQRCode">
       <div class="qrcode-content">
         <div class="qrcode-box">
-          <div class="qrcode-placeholder">
-            <svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M7 7h3v3H7zm8 0h3v3h-3zm-8 8h3v3H7zm8 0h3v3h-3z"/></svg>
-          </div>
+          <canvas ref="qrCanvasRef" class="qrcode-canvas"></canvas>
           <div class="qrcode-label">{{ currentTraceCode }}</div>
         </div>
         <p class="qrcode-note">消费者扫码即可查看完整冷链追溯记录</p>
@@ -321,6 +319,7 @@ import { ElMessage } from 'element-plus'
 import { traceabilityAPI } from '@/api'
 import { formatDateTime } from '@/utils'
 import * as echarts from 'echarts'
+import QRCode from 'qrcode'
 
 const searchType = ref('code')
 const searchKeyword = ref('')
@@ -332,7 +331,25 @@ const showQRCode = ref(false)
 const creating = ref(false)
 const currentTraceCode = ref('')
 const chartRef = ref<HTMLElement>()
+const qrCanvasRef = ref<HTMLCanvasElement>()
 let chartInstance: any = null
+
+/** 生成真实二维码到 canvas */
+async function generateQRCode() {
+  if (!currentTraceCode.value || !qrCanvasRef.value) return
+  const text = currentTraceCode.value
+  const canvas = qrCanvasRef.value!
+  try {
+    await QRCode.toCanvas(canvas, text, {
+      width: 180,
+      margin: 2,
+      color: { dark: '#1a1a1a', light: '#ffffff' },
+      errorCorrectionLevel: 'M',
+    })
+  } catch {
+    // 降容：如果 canvas 方式失败则忽略（保留空白）
+  }
+}
 
 const STAGES_MAP: Record<string, string> = {
   precool: '产地预冷',
@@ -649,7 +666,7 @@ onMounted(loadStats)
 
 .qrcode-content { text-align: center; padding: 20px; }
 .qrcode-box { display: flex; flex-direction: column; align-items: center; }
-.qrcode-placeholder { width: 120px; height: 120px; border: 2px dashed var(--border-light); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+.qrcode-canvas { width: 180px !important; height: 180px !important; border: 1px solid var(--border-light); border-radius: 12px; padding: 8px; background: #fff; }
 .qrcode-label { font-family: var(--font-mono); font-size: 12px; color: var(--accent); margin-top: 12px; }
 .qrcode-note { font-size: 12px; color: var(--text-muted); margin-top: 16px; }
 

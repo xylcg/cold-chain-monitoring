@@ -10,6 +10,12 @@ import './styles/global.css'
 
 const app = createApp(App)
 
+// 全局错误处理——防止单组件崩溃导致整页白屏
+app.config.errorHandler = (err, instance, info) => {
+  console.error('[Vue Error]', err, info)
+  // 不弹 ElMessage 避免循环引用，只打印日志
+}
+
 // 注册所有 Element Plus 图标
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)

@@ -28,14 +28,23 @@ async def predict_all(
         results.append(data)
 
     results.sort(key=lambda x: x.get("failure_probability", 0), reverse=True)
+    
+    high_count = sum(1 for r in results if r.get("risk_level") == "high")
+    medium_count = sum(1 for r in results if r.get("risk_level") == "medium")
+    low_count = sum(1 for r in results if r.get("risk_level") == "low")
+    
     return {
         "total_devices": len(ws["vehicles"]),
         "analyzed": len(results),
         "predictions": results,
         "summary": {
-            "high_risk": sum(1 for r in results if r.get("risk_level") == "high"),
-            "medium_risk": sum(1 for r in results if r.get("risk_level") == "medium"),
-            "low_risk": sum(1 for r in results if r.get("risk_level") == "low"),
+            "critical_high": high_count,
+            "high_risk": high_count,
+            "medium": medium_count,
+            "medium_risk": medium_count,
+            "low": low_count,
+            "low_risk": low_count,
+            "normal": max(0, len(ws["vehicles"]) - high_count - medium_count - low_count),
         },
     }
 

@@ -273,7 +273,93 @@
           <div class="muh-sub">支持温度记录表、设备巡检单、现场照片等</div>
         </div>
 
-        <div class="mb-card upload-card">
+        <!-- 拍照模式切换 -->
+        <div class="camera-mode-bar">
+          <div class="cmb-item" :class="{ active: cameraMode === 'normal' }" @click="switchCameraMode('normal')">📷 普通拍照</div>
+          <div class="cmb-item" :class="{ active: cameraMode === 'temperature' }" @click="switchCameraMode('temperature')">🌡 温度记录纸</div>
+        </div>
+
+        <!-- 摄像头实时预览区域 -->
+        <div class="mb-card upload-card" v-if="cameraActive">
+          <div class="camera-view">
+            <video ref="cameraVideoEl" class="camera-video" autoplay playsinline muted></video>
+            <div class="camera-overlay">
+              <div v-if="cameraMode === 'normal'" class="viewfinder-normal">
+                <div class="crosshair-h"></div>
+                <div class="crosshair-v"></div>
+              </div>
+              <div v-else class="viewfinder-temp">
+                <div class="crosshair-h"></div>
+                <div class="crosshair-v"></div>
+              </div>
+            </div>
+          </div>
+          <div class="camera-actions">
+            <button class="cam-btn cam-btn-close" @click="closeCamera">✕</button>
+            <button class="cam-btn cam-btn-shutter" @click="takePhoto">
+              <span class="cam-shutter-ring"></span>
+            </button>
+            <div class="cam-placeholder"></div>
+          </div>
+          <div class="camera-tip">
+            {{ cameraMode === 'temperature' ? '📄 将温度记录纸放入框内，点击拍照按钮' : '📷 对准拍摄对象，点击拍照按钮' }}
+          </div>
+        </div>
+
+        <!-- 拍照预览 + 温度记录纸AI识别结果 -->
+        <div class="mb-card upload-card" v-if="capturedPhotoDataUrl && !cameraActive">
+          <div class="preview-section">
+            <img :src="capturedPhotoDataUrl" class="preview-img-full" />
+            <div class="preview-actions">
+              <button class="pa-btn retry" @click="retakePhoto">🔄 重拍</button>
+            </div>
+          </div>
+
+          <!-- 温度记录纸AI识别结果 -->
+          <div v-if="cameraMode === 'temperature'" class="recognition-result">
+            <div v-if="recognizing">
+              <div class="rr-loading">
+                <span class="rr-spinner">🔄</span>
+                <span>AI识别中...</span>
+              </div>
+            </div>
+            <div v-else-if="recognitionResult">
+              <div class="rr-header">
+                <span class="rr-title">🤖 AI识别结果</span>
+                <span class="rr-status" :class="recognitionResult.overall_status">
+                  {{ recognitionResult.overall_status === 'pass' ? '✅ 温度合格' : '⚠️ ' + recognitionResult.summary.fail + '处异常' }}
+                </span>
+              </div>
+              <div class="rr-temp-list">
+                <div v-for="(item, idx) in recognitionResult.temperatures" :key="idx"
+                     class="rr-temp-item" :class="item.is_ok ? 'ok' : 'fail'">
+                  <span class="rrt-time">{{ item.time }}</span>
+                  <span class="rrt-temp" :class="item.is_ok ? 'ok' : 'fail'">
+                    {{ item.temp }}℃ {{ item.is_ok ? '✅' : '❌' }}
+                  </span>
+                </div>
+              </div>
+              <div class="rr-summary">
+                标准范围: {{ recognitionResult.temperatures[0]?.standard || '—' }} |
+                合格 {{ recognitionResult.summary.ok }} / 异常 {{ recognitionResult.summary.fail }}
+              </div>
+              <div v-if="recognitionResult.suggestion" class="rr-suggestion">
+                💡 {{ recognitionResult.suggestion }}
+              </div>
+              <div class="rr-actions">
+                <button class="rra-btn confirm" @click="submitUploadWithRecognition">✅ 确认上传</button>
+                <button class="rra-btn retry" @click="retakePhoto">🔄 重新拍照</button>
+              </div>
+            </div>
+            <div v-else class="rr-actions" style="margin-top:12px">
+              <button class="rra-btn confirm" @click="submitUploadNormal">✅ 直接上传</button>
+              <button class="rra-btn retry" @click="recognizeTemperaturePaper">🔍 重新识别</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 未拍照时显示的拍照按钮 -->
+        <div class="mb-card upload-card" v-if="!cameraActive && !capturedPhotoDataUrl">
           <div class="upload-form">
             <div class="uf-item">
               <label>运单号</label>
@@ -294,19 +380,24 @@
               <textarea v-model="uploadForm.notes" placeholder="请输入备注信息" class="uf-textarea"></textarea>
             </div>
             <div class="uf-item">
-              <label>照片上传</label>
-              <input ref="uploadFileInput" type="file" accept="image/*" class="mb-file-input" @change="onUploadFileSelected" />
-              <button class="mb-camera-btn" @click="triggerFileInput" v-if="!uploadPhotoPreview">
-                <span class="mc-icon">📷</span><span class="mc-text">点击拍照</span>
-              </button>
-              <div class="mb-photo-preview" v-else>
-                <img :src="uploadPhotoPreview" class="mb-preview-img" />
-                <button class="mpa-btn cancel" @click="clearUploadPhoto">重拍</button>
+              <label>{{ cameraMode === 'temperature' ? '温度记录纸拍照' : '照片上传' }}</label>
+              <div class="mb-camera-btn" @click="openCamera">
+                <span class="mc-icon">📷</span>
+                <span class="mc-text">{{ cameraMode === 'temperature' ? '调用摄像头拍温度记录纸' : '调用摄像头拍照' }}</span>
+                <span class="mc-sub">点击打开摄像头</span>
               </div>
             </div>
-            <button class="uf-submit-btn" @click="submitUpload" :disabled="!uploadForm.waybill_id || !uploadPhotoFile || uploading">
-              {{ uploading ? '上传中...' : '确认上传' }}
-            </button>
+          </div>
+        </div>
+
+        <!-- 普通拍照已拍好，等待上传 -->
+        <div class="mb-card upload-card" v-if="capturedPhotoDataUrl && cameraMode === 'normal' && !cameraActive">
+          <div class="preview-section">
+            <img :src="capturedPhotoDataUrl" class="preview-img-full" />
+          </div>
+          <div class="preview-actions" style="display:flex;gap:8px;margin-top:12px">
+            <button class="uf-submit-btn" style="flex:1" @click="submitUploadNormal">✅ 确认上传</button>
+            <button class="rra-btn retry" @click="retakePhoto">🔄 重拍</button>
           </div>
         </div>
 
@@ -496,7 +587,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { driverAPI } from '@/api'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
@@ -511,6 +602,15 @@ const alertsData = ref<any>({ success: false, alerts: [], alert_count: 0 })
 const uploadHistory = ref<any>({ count: 0, records: [] })
 const waybillsData = ref<any>({ count: 0, waybills: [] })
 const waybillDetail = ref<any>(null)
+
+// 摄像头相关
+const cameraMode = ref<'normal' | 'temperature'>('normal')
+const cameraStream = ref<MediaStream | null>(null)
+const cameraActive = ref(false)
+const cameraVideoEl = ref<HTMLVideoElement | null>(null)
+const capturedPhotoDataUrl = ref('')
+const recognizing = ref(false)
+const recognitionResult = ref<any>(null)
 
 const uploadForm = ref({
   waybill_id: '',
@@ -664,6 +764,88 @@ async function viewWaybillDetail(wb: any) {
   }
 }
 
+// ===== 摄像头功能 =====
+function switchCameraMode(mode: 'normal' | 'temperature') {
+  cameraMode.value = mode
+  if (cameraActive.value) {
+    closeCamera()
+  }
+}
+
+async function openCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' },
+      audio: false,
+    })
+    cameraStream.value = stream
+    cameraActive.value = true
+    await nextTick()
+    if (cameraVideoEl.value) {
+      cameraVideoEl.value.srcObject = stream
+      try { await cameraVideoEl.value.play() } catch {}
+    }
+  } catch (err: any) {
+    ElMessage.error('无法访问摄像头，请检查权限')
+  }
+}
+
+function closeCamera() {
+  if (cameraStream.value) {
+    cameraStream.value.getTracks().forEach(t => t.stop())
+    cameraStream.value = null
+  }
+  cameraActive.value = false
+}
+
+function takePhoto() {
+  if (!cameraVideoEl.value) return
+  const video = cameraVideoEl.value
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth || 640
+  canvas.height = video.videoHeight || 480
+  const ctx = canvas.getContext('2d')!
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+  capturedPhotoDataUrl.value = canvas.toDataURL('image/jpeg', 0.85)
+  closeCamera()
+
+  // 温度记录纸模式自动触发AI识别
+  if (cameraMode.value === 'temperature') {
+    recognizeTemperaturePaper()
+  }
+}
+
+function retakePhoto() {
+  capturedPhotoDataUrl.value = ''
+  recognitionResult.value = null
+  openCamera()
+}
+
+// ===== AI识别温度记录纸（前端Mock，后端接口就绪后替换） =====
+async function recognizeTemperaturePaper() {
+  if (!capturedPhotoDataUrl.value) return
+  recognizing.value = true
+  // 模拟AI识别延时
+  setTimeout(() => {
+    recognitionResult.value = {
+      success: true,
+      record_id: 'TR-' + Date.now(),
+      temperatures: [
+        { time: '08:00', temp: 4.2, is_ok: true, standard: '-18~6℃' },
+        { time: '10:00', temp: 5.1, is_ok: true, standard: '-18~6℃' },
+        { time: '12:00', temp: 7.8, is_ok: false, standard: '-18~6℃' },
+        { time: '14:00', temp: 4.9, is_ok: true, standard: '-18~6℃' },
+        { time: '16:00', temp: 6.2, is_ok: false, standard: '-18~6℃' },
+      ],
+      summary: { total: 5, ok: 3, fail: 2 },
+      overall_status: 'fail',
+      suggestion: '温度记录纸显示有2处温度超标，建议检查冷机设置并联系调度',
+    }
+    recognizing.value = false
+  }, 1500)
+}
+
+// ===== 上传 =====
 function triggerFileInput() {
   uploadFileInput.value?.click()
 }
@@ -686,28 +868,72 @@ function clearUploadPhoto() {
   if (uploadFileInput.value) uploadFileInput.value.value = ''
 }
 
-async function submitUpload() {
+async function submitUploadNormal() {
+  // 普通拍照上传
   if (!uploadForm.value.waybill_id) {
     ElMessage.warning('请输入运单号')
     return
   }
-  if (!uploadPhotoFile) {
-    ElMessage.warning('请先选择照片')
+  if (!capturedPhotoDataUrl.value && !uploadPhotoFile) {
+    ElMessage.warning('请先拍照或选择照片')
     return
   }
-
   uploading.value = true
   try {
+    let fileToUpload: File
+    if (capturedPhotoDataUrl.value) {
+      const blob = await (await fetch(capturedPhotoDataUrl.value)).blob()
+      fileToUpload = new File([blob], 'photo_' + Date.now() + '.jpg', { type: 'image/jpeg' })
+    } else if (uploadPhotoFile) {
+      fileToUpload = uploadPhotoFile
+    } else {
+      ElMessage.warning('请先拍照')
+      uploading.value = false
+      return
+    }
     const fd = new FormData()
-    fd.append('file', uploadPhotoFile)
+    fd.append('file', fileToUpload)
     fd.append('waybill_id', uploadForm.value.waybill_id)
     fd.append('record_type', uploadForm.value.record_type)
     fd.append('notes', uploadForm.value.notes)
-
     const res: any = await driverAPI.uploadRecord(fd)
     if (res.success) {
       ElMessage.success('上传成功，等待审核')
-      clearUploadPhoto()
+      capturedPhotoDataUrl.value = ''
+      uploadForm.value = { waybill_id: '', record_type: 'temperature_record', notes: '' }
+      await loadUploadHistory()
+    } else {
+      ElMessage.error(res.message || '上传失败')
+    }
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail || '上传失败，请重试'
+    ElMessage.error(detail)
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function submitUploadWithRecognition() {
+  // 带温度记录纸识别结果的上传
+  if (!uploadForm.value.waybill_id) {
+    ElMessage.warning('请输入运单号')
+    return
+  }
+  uploading.value = true
+  try {
+    const blob = await (await fetch(capturedPhotoDataUrl.value)).blob()
+    const fileToUpload = new File([blob], 'temp_record_' + Date.now() + '.jpg', { type: 'image/jpeg' })
+    const fd = new FormData()
+    fd.append('file', fileToUpload)
+    fd.append('waybill_id', uploadForm.value.waybill_id)
+    fd.append('record_type', 'temperature_record')
+    fd.append('notes', uploadForm.value.notes)
+    fd.append('ai_result', JSON.stringify(recognitionResult.value || {}))
+    const res: any = await driverAPI.uploadRecord(fd)
+    if (res.success) {
+      ElMessage.success('温度记录纸已上传，AI识别结果已同步')
+      capturedPhotoDataUrl.value = ''
+      recognitionResult.value = null
       uploadForm.value = { waybill_id: '', record_type: 'temperature_record', notes: '' }
       await loadUploadHistory()
     } else {
@@ -761,6 +987,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
+  // 释放摄像头
+  if (cameraStream.value) {
+    cameraStream.value.getTracks().forEach(t => t.stop())
+  }
 })
 </script>
 
@@ -1941,5 +2171,274 @@ onUnmounted(() => {
     min-height: auto;
     box-shadow: 0 4px 30px rgba(0, 0, 0, 0.08);
   }
+}
+
+/* 摄像头模式切换栏 */
+.camera-mode-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.cmb-item {
+  flex: 1;
+  text-align: center;
+  padding: 10px 8px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 2px solid #e0e0e0;
+  background: #fafafa;
+  transition: all 0.2s;
+  user-select: none;
+}
+.cmb-item.active {
+  border-color: #00a8ff;
+  background: #e8f4fd;
+  color: #00a8ff;
+}
+
+/* 摄像头实时预览 */
+.camera-view {
+  position: relative;
+  background: #000;
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+.camera-video {
+  width: 100%;
+  display: block;
+  min-height: 240px;
+  object-fit: cover;
+}
+.camera-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.viewfinder-normal {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 70%; height: 50%;
+  border: 2px dashed rgba(255,255,255,0.5);
+  border-radius: 12px;
+}
+.viewfinder-temp {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 85%; height: 65%;
+  border: 2px solid #00ff88;
+  border-radius: 4px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+}
+.viewfinder-temp::after {
+  content: '将温度记录纸放入框内';
+  position: absolute;
+  bottom: -26px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; color: #00ff88; white-space: nowrap;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+}
+.crosshair-h, .crosshair-v {
+  position: absolute;
+  background: rgba(255,255,255,0.3);
+}
+.crosshair-h { width: 100%; height: 1px; top: 50%; left: 0; }
+.crosshair-v { height: 100%; width: 1px; left: 50%; top: 0; }
+
+.camera-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 12px;
+  background: #000;
+}
+.cam-btn {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  background: rgba(255,255,255,0.2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; color: #fff;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.cam-btn:active { transform: scale(0.92); }
+.cam-btn-shutter {
+  background: #fff;
+  border-color: #ccc;
+  position: relative;
+}
+.cam-shutter-ring {
+  display: block;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  border: 3px solid #333;
+}
+.cam-btn-close {
+  background: rgba(255,255,255,0.15);
+  border-color: rgba(255,255,255,0.5);
+}
+.cam-placeholder { width: 56px; height: 56px; flex-shrink: 0; }
+
+.camera-tip {
+  text-align: center;
+  font-size: 12px;
+  color: #666;
+  padding: 8px 12px 4px;
+  background: #f8fafc;
+  border-radius: 0 0 14px 14px;
+}
+
+/* 拍照预览 */
+.preview-section {
+  width: 100%;
+}
+.preview-img-full {
+  width: 100%;
+  border-radius: 10px;
+  max-height: 320px;
+  object-fit: contain;
+  background: #f0f0f0;
+}
+.preview-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.pa-btn {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+.pa-btn.retry { background: #f0f0f0; color: #666; }
+
+/* AI识别结果卡片 */
+.recognition-result {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 12px;
+}
+.rr-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #0369a1;
+  padding: 12px 0;
+  justify-content: center;
+}
+.rr-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  font-size: 18px;
+}
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.rr-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.rr-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0369a1;
+}
+.rr-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.rr-status.pass { background: #d1fae5; color: #059669; }
+.rr-status.fail { background: #fee2e2; color: #dc2626; }
+
+.rr-temp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.rr-temp-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 5px 8px;
+  background: #fff;
+  border-radius: 6px;
+}
+.rr-temp-item.ok { border-left: 3px solid #00d2a0; }
+.rr-temp-item.fail { border-left: 3px solid #ef4444; }
+.rrt-time { color: #666; font-family: monospace; }
+.rrt-temp { font-weight: 600; }
+.rrt-temp.ok { color: #059669; }
+.rrt-temp.fail { color: #ef4444; }
+
+.rr-summary {
+  font-size: 11px;
+  color: #666;
+  padding: 4px 0;
+  border-top: 1px dashed #e0e0e0;
+}
+.rr-suggestion {
+  font-size: 12px;
+  color: #d97706;
+  background: #fffbeb;
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+.rr-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.rra-btn {
+  flex: 1;
+  padding: 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+}
+.rra-btn.confirm { background: #00a8ff; color: #fff; }
+.rra-btn.retry { background: #f0f0f0; color: #666; }
+
+/* 拍照大按钮 */
+.mb-camera-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 32px 16px;
+  border: 2px dashed #00a8ff;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #e8f4fd, #f0f9ff);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.mb-camera-btn:active {
+  transform: scale(0.98);
+  background: linear-gradient(135deg, #d4ecfb, #e8f4fd);
+}
+.mc-sub {
+  font-size: 11px;
+  color: #999;
+  margin-top: 2px;
 }
 </style>

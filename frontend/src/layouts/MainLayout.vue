@@ -42,16 +42,16 @@
       </div>
 
       <!-- 下拉面板 -->
-      <div v-show="activeDropdown" class="dropdown-panel" @mouseenter="cancelClose" @mouseleave="scheduleClose">
+      <div v-show="activeDropdown" class="dropdown-panel" @mouseenter="cancelClose" @mouseleave="scheduleClose" @mousedown.prevent>
         <div class="dropdown-inner">
           <div class="dropdown-grid" :style="gridStyle">
-            <router-link
+            <div
               v-for="item in currentItems"
               :key="item.path"
-              :to="item.path"
               class="dropdown-item"
               :class="{ active: activeMenu === item.path }"
-              @click="handleNavClick"
+              @click="handleNavItemClick(item.path)"
+              @mousedown.prevent="handleNavItemClick(item.path)"
             >
               <div class="dropdown-icon">
                 <svg class="item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -62,7 +62,7 @@
                 <div class="dropdown-title">{{ item.title }}</div>
                 <div class="dropdown-desc">{{ item.desc }}</div>
               </div>
-            </router-link>
+            </div>
           </div>
         </div>
       </div>
@@ -113,7 +113,7 @@ function openDropdown(label: string) {
 function scheduleClose() {
   closeTimer = setTimeout(() => {
     activeDropdown.value = null
-  }, 150)
+  }, 300)
 }
 
 function cancelClose() {
@@ -126,6 +126,11 @@ function cancelClose() {
 function handleNavClick() {
   cancelClose()
   activeDropdown.value = null
+}
+
+function handleNavItemClick(path: string) {
+  activeDropdown.value = null
+  router.push(path)
 }
 
 const currentItems = computed(() => {

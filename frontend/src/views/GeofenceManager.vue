@@ -33,17 +33,17 @@
     <div class="main-content">
       <div class="left-panel">
         <div class="panel-header">
-          <h3>围栏列表</h3>
+          <h3>围栏列表 <span class="list-count">({{ filteredFences.length }}/{{ fences.length }})</span></h3>
           <div class="filter-row">
             <el-select v-model="filterType" placeholder="类型" size="small" style="width:120px">
-              <el-option label="全部" value="" />
+              <el-option label="全部类型" value="" />
               <el-option label="圆形点围栏" value="circle" />
               <el-option label="带状线路围栏" value="line_buffer" />
               <el-option label="多边形围栏" value="polygon" />
               <el-option label="行政城市围栏" value="city" />
             </el-select>
             <el-select v-model="filterCategory" placeholder="分类" size="small" style="width:120px">
-              <el-option label="全部" value="" />
+              <el-option label="全部分类" value="" />
               <el-option label="仓库" value="warehouse" />
               <el-option label="枢纽" value="hub" />
               <el-option label="干线" value="route_segment" />
@@ -52,7 +52,11 @@
               <el-option label="高温区" value="high_temp" />
               <el-option label="城市" value="city_zone" />
             </el-select>
-            <el-switch v-model="filterActive" active-text="活跃" inactive-text="全部" size="small" />
+            <el-select v-model="filterStatus" placeholder="状态" size="small" style="width:100px">
+              <el-option label="全部" value="" />
+              <el-option label="启用中" value="active" />
+              <el-option label="已禁用" value="inactive" />
+            </el-select>
           </div>
         </div>
 
@@ -261,7 +265,7 @@ const editingFence = ref<any>(null)
 
 const filterType = ref('')
 const filterCategory = ref('')
-const filterActive = ref(true)
+const filterStatus = ref('')
 
 const form = ref({
   name: '',
@@ -287,7 +291,8 @@ const filteredFences = computed(() => {
   return fences.value.filter(f => {
     if (filterType.value && f.fence_type !== filterType.value) return false
     if (filterCategory.value && f.category !== filterCategory.value) return false
-    if (filterActive.value && !f.active) return false
+    if (filterStatus.value === 'active' && !f.active) return false
+    if (filterStatus.value === 'inactive' && f.active) return false
     return true
   })
 })
@@ -493,6 +498,7 @@ onMounted(loadData)
 
 .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
 .panel-header h3 { font-size: 15px; font-weight: 700; color: var(--text-title); }
+.list-count { font-weight: 400; font-size: 12px; color: var(--text-muted); margin-left: 4px; }
 .filter-row { display: flex; gap: 8px; }
 
 .fence-list {

@@ -67,7 +67,7 @@
         </div>
 
         <div class="info-footer">
-          <span class="footer-item">状态: {{ queryResult.status }}</span>
+          <span class="footer-item">状态: {{ statusLabel(queryResult.status) }}</span>
           <span class="footer-item">完成 {{ queryResult.completed_stages }}/{{ queryResult.total_stages }} 环节</span>
           <span v-if="queryResult.violations_count > 0" class="footer-item warning">
             ⚠️ {{ queryResult.violations_count }} 次温度异常
@@ -326,6 +326,11 @@ function getAlertIcon(severity: string) {
   }
 }
 
+function statusLabel(s: string): string {
+  const m: Record<string, string> = { pending: '待接单', accepted: '已接单', in_transit: '配送中', delivered: '已送达', completed: '已完成', cancelled: '已取消' }
+  return m[s] || s
+}
+
 function formatDateTime(timestamp: string) {
   if (!timestamp) return '-'
   try {
@@ -396,20 +401,47 @@ function renderChart() {
   const humidities = points.map((p: any) => p.humidity)
 
   const threshold = curveData.value.threshold || {}
+  const hasMin = typeof threshold.min === 'number'
+  const hasMax = typeof threshold.max === 'number'
   const markLines: any[] = []
-  if (threshold.min) {
+  if (hasMin) {
     markLines.push({
       yAxis: threshold.min,
       lineStyle: { color: '#00a8ff', type: 'dashed', width: 1.5 },
       label: { formatter: `${threshold.min}℃ 下限`, color: '#00a8ff', fontSize: 10 },
     })
   }
-  if (threshold.max) {
+  if (hasMax) {
     markLines.push({
       yAxis: threshold.max,
       lineStyle: { color: '#f59e0b', type: 'dashed', width: 1.5 },
       label: { formatter: `${threshold.max}℃ 上限`, color: '#f59e0b', fontSize: 10 },
     })
+  }
+
+  // 构建异常区域标记 (markArea)
+  const markAreas: any[] = []
+  if (showAnomalyMark.value && hasMin && hasMax) {
+    let areaStart = -1
+    for (let i = 0; i < temperatures.length; i++) {
+      const t = temperatures[i]
+      const isAnomaly = t < threshold.min || t > threshold.max
+      if (isAnomaly && areaStart === -1) {
+        areaStart = i
+      } else if (!isAnomaly && areaStart !== -1) {
+        markAreas.push([
+          { xAxis: timestamps[areaStart] },
+          { xAxis: timestamps[i - 1] },
+        ])
+        areaStart = -1
+      }
+    }
+    if (areaStart !== -1) {
+      markAreas.push([
+        { xAxis: timestamps[areaStart] },
+        { xAxis: timestamps[temperatures.length - 1] },
+      ])
+    }
   }
 
   const series: any[] = [{
@@ -423,6 +455,23 @@ function renderChart() {
       ]),
     },
     markLine: { silent: true, symbol: 'none', data: markLines },
+    ...(markAreas.length > 0 ? {
+      markArea: {
+        silent: true,
+        data: markAreas,
+        itemStyle: {
+          color: 'rgba(239, 68, 68, 0.12)',
+        },
+        label: {
+          show: true,
+          position: 'insideTop',
+          formatter: '超温',
+          fontSize: 10,
+          color: '#ef4444',
+          fontWeight: 'bold',
+        },
+      },
+    } : {}),
   }]
 
   if (showHumidity.value) {

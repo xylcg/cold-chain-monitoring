@@ -6,7 +6,7 @@
         <span class="subtitle">冷库库位 · 冷藏车辆 · 蓄冷板/冰排 · 能耗监测</span>
       </div>
       <div class="header-actions">
-        <button class="btn-primary" @click="showAllocateModal = true">
+        <button class="btn-primary" @click="openAllocateModal">
           <span>🔄</span> 一键分配资源
         </button>
         <button class="btn-secondary" @click="loadData">
@@ -103,7 +103,7 @@
         <div class="glass-card inventory-section">
           <div class="card-header">
             <span>📦 库存概览</span>
-            <button class="btn-sm" @click="loadInventory">刷新</button>
+            <button class="btn-sm" @click="refreshInventory">刷新</button>
           </div>
           <div v-if="inventorySummary" class="inventory-summary">
             <div class="inv-stat">
@@ -194,8 +194,16 @@
               </div>
             </div>
             <div class="forecast-chart">
-              <div v-for="f in forecastData.forecast_data?.slice(0, 12)" :key="f.time" class="fc-bar-wrap">
-                <div class="fc-bar" :style="{ height: (f.total_demand / 100 * 100) + '%' }"></div>
+              <div v-for="(f, idx) in displayForecast" :key="f.time" class="fc-bar-wrap">
+                <div class="fc-bar-container" :class="{ 'is-peak': f.total_demand === peakDemand }">
+                  <div 
+                    class="fc-bar" 
+                    :class="{ 'fc-bar-peak': f.total_demand === peakDemand }"
+                    :style="{ height: getBarHeight(f.total_demand) + '%' }"
+                    :title="`${f.hour}:00 · ${f.total_demand}单`"
+                  ></div>
+                  <span v-if="f.total_demand === peakDemand" class="fc-peak-badge">峰 {{ f.total_demand }}</span>
+                </div>
                 <span class="fc-label">{{ f.hour }}:00</span>
               </div>
             </div>
@@ -459,6 +467,12 @@ const ZONE_MAP: Record<string, string> = {
   ambient: '恒温',
 }
 
+const zoneColors: Record<string, string> = {
+  frozen: '#4361ee',
+  refrigerated: '#00a8ff',
+  ambient: '#f59e0b',
+}
+
 const warehouses = ref<any[]>([])
 const vehicles = ref<any[]>([])
 const coldPlates = ref<any[]>([])
@@ -467,6 +481,29 @@ const inventorySummary = ref<any>(null)
 const inventoryItems = ref<any[]>([])
 const forecastData = ref<any>(null)
 const forecastHours = ref(48)
+
+// 图表相关计算
+const displayForecast = computed(() => {
+  return forecastData.value?.forecast_data?.slice(0, 12) || []
+})
+
+const peakDemand = computed(() => {
+  if (!forecastData.value?.forecast_data) return 0
+  return Math.max(...forecastData.value.forecast_data.map((f: any) => f.total_demand))
+})
+
+const maxDemand = computed(() => {
+  if (!forecastData.value?.forecast_data) return 1
+  // 用绝对最大值作为基准（不乘1.1），让最高的柱子接近100%
+  const vals = forecastData.value.forecast_data.map((f: any) => f.total_demand)
+  return Math.max(...vals, 1)
+})
+
+function getBarHeight(value: number): number {
+  const maxVal = maxDemand.value || 1
+  // 确保最小4%，最大95%+，拉大视觉差距
+  return Math.max(4, (value / maxVal) * 95)
+}
 
 const vehicleFilter = ref('all')
 const vehicleFilters = [
@@ -491,6 +528,27 @@ const allocateForm = ref({
   priority: 'normal',
   temperature_requirement: '',
 })
+
+// 待分配的推荐订单（从系统获取或使用默认示例）
+const pendingOrders = ref<any[]>([])
+
+function openAllocateModal() {
+  // 自动填充默认值
+  const now = new Date()
+  const dateStr = now.toISOString().slice(0,10).replace(/-/g,'')
+  const timeStr = String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0')
+  allocateForm.value = {
+    order_id: `ORD${dateStr}${timeStr}`,
+    cargo_name: '冷冻牛肉',
+    cargo_category: '冷冻食品',
+    quantity: 2000,
+    origin: '北京',
+    destination: '上海',
+    priority: 'normal',
+    temperature_requirement: '-18℃~-15℃',
+  }
+  showAllocateModal.value = true
+}
 
 const filteredVehicles = computed(() => {
   if (vehicleFilter.value === 'all') return vehicles.value
@@ -527,19 +585,24 @@ function getStatusClass(status: string) {
 
 async function loadData() {
   try {
-    const [whRes, vRes, cpRes, uRes] = await Promise.all([
+    // 并行加载核心数据（每个 API 独立容错）
+    const [whRes, vRes, cpRes, uRes] = await Promise.allSettled([
       resourceAPI.getWarehouses(),
       resourceAPI.getVehicles(),
       resourceAPI.getColdPlates(),
       resourceAPI.getUtilization(),
     ])
-    warehouses.value = whRes.warehouses || []
-    vehicles.value = vRes.vehicles || []
-    coldPlates.value = cpRes.items || []
-    utilData.value = uRes
+    
+    warehouses.value = whRes.status === 'fulfilled' ? (whRes.value?.warehouses || []) : []
+    vehicles.value = vRes.status === 'fulfilled' ? (vRes.value?.vehicles || []) : []
+    coldPlates.value = cpRes.status === 'fulfilled' ? (cpRes.value?.items || []) : []
+    utilData.value = uRes.status === 'fulfilled' ? uRes.value : null
+    
+    // 子数据异步加载失败不影响主页面
     loadInventory()
     loadForecast()
-  } catch {
+  } catch (e) {
+    console.error('loadData error:', e)
     ElMessage.warning('加载资源数据失败，请检查网络或刷新页面重试')
   }
 }
@@ -547,11 +610,30 @@ async function loadData() {
 async function loadInventory() {
   try {
     const res = await resourceAPI.getWarehouseInventorySummary()
-    inventorySummary.value = res.data
+    inventorySummary.value = res?.data || null
     const itemsRes = await resourceAPI.getWarehouseInventory()
-    inventoryItems.value = itemsRes.data?.items || []
-  } catch {
-    console.log('加载库存失败')
+    inventoryItems.value = itemsRes?.data?.items || []
+  } catch (e) {
+    console.log('加载库存失败', e)
+  }
+}
+
+async function refreshInventory() {
+  try {
+    // 调用后端刷新接口，重新生成库存数据
+    const refreshRes = await fetch('/api/v1/resources/refresh-inventory', { method: 'POST' })
+    const data = await refreshRes.json()
+    if (data.code === 200) {
+      inventorySummary.value = data.data || null
+      // 重新加载明细
+      const itemsRes = await resourceAPI.getWarehouseInventory()
+      inventoryItems.value = itemsRes?.data?.items || []
+      ElMessage.success('库存数据已刷新')
+    }
+  } catch (e) {
+    console.log('刷新库存失败', e)
+    // 降级：至少重新加载现有数据
+    await loadInventory()
   }
 }
 
@@ -680,10 +762,14 @@ onMounted(() => {
 .fs-item { flex: 1; }
 .fs-label { display: block; font-size: 11px; color: var(--text-muted); }
 .fs-value { display: block; font-size: 16px; font-weight: 600; }
-.forecast-chart { display: flex; align-items: flex-end; gap: 4px; height: 120px; padding: 8px; margin-bottom: 16px; }
-.fc-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; }
-.fc-bar { width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 4px; }
-.fc-label { font-size: 9px; color: var(--text-muted); margin-top: 4px; }
+.forecast-chart { display: flex; align-items: flex-end; gap: 6px; height: 160px; padding: 10px 10px 28px 10px; margin-bottom: 12px; background: rgba(0,168,255,0.03); border-radius: 10px; }
+.fc-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; position: relative; height: 100%; justify-content: flex-end; }
+.fc-bar-container { width: 100%; display: flex; justify-content: center; align-items: flex-end; position: relative; height: 130px; }
+.fc-bar { width: 70%; border-radius: 4px 4px 0 0; min-height: 4px; transition: all 0.35s ease; cursor: pointer; background: linear-gradient(180deg, #00c6ff 0%, #0072ff 100%); opacity: 0.85; box-shadow: 0 0 6px rgba(0,114,255,0.15); }
+.fc-bar:hover { opacity: 1; transform: scaleX(1.15); box-shadow: 0 2px 12px rgba(0,114,255,0.3); }
+.fc-bar-peak { background: linear-gradient(180deg, #ff7b54 0%, #ff3366 100%) !important; opacity: 1 !important; box-shadow: 0 0 14px rgba(255,51,102,0.4) !important; }
+.fc-label { font-size: 10px; color: var(--text-muted); margin-top: 5px; white-space: nowrap; font-weight: 500; }
+.fc-peak-badge { position: absolute; top: -22px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #fff; font-weight: 700; background: linear-gradient(135deg, #ff3366, #ff7b54); padding: 2px 8px; border-radius: 8px; white-space: nowrap; box-shadow: 0 2px 8px rgba(255,51,102,0.3); }
 .forecast-recommendations { background: rgba(0,168,255,0.05); border-radius: 6px; padding: 10px; }
 .rec-item { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
 .rec-item:last-child { margin-bottom: 0; }

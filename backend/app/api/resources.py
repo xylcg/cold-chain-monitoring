@@ -375,6 +375,13 @@ def _allocate_vehicle(order: dict) -> Optional[Dict]:
     # 锁定车辆资源
     lock_id = _lock_resource("vehicle", best_vehicle["id"], order.get("order_id", ""))
     
+    # 更新车辆状态为运输中（核心：分配后状态要变）
+    for v in MULTI_ZONE_VEHICLES:
+        if v["id"] == best_vehicle["id"] and v["status"] == "idle":
+            v["status"] = "in_transit"
+            v["current_city"] = f"{origin}→{destination}"
+            break
+    
     return {
         "status": "success",
         "vehicle_id": best_vehicle["id"],
@@ -495,25 +502,54 @@ def _predict_order_demand(hours_ahead: int = 48) -> Dict:
     AI订单预测驱动前置调度
     基于历史订单量、季节波动、温区结构、节假日规律、天气温度变化
     预测未来1-3天各温区货物入库量、出库量、配送单量
+    
+    优化：增大峰谷差异，确保图表有明显起伏
     """
     now = datetime.utcnow()
     forecast = []
+    
+    # 使用固定种子保证同一请求内一致，但每次调用不同结果
+    random.seed(now.hour * 100 + now.minute)
     
     for i in range(hours_ahead):
         hour = (now + timedelta(hours=i)).hour
         day_of_week = (now + timedelta(hours=i)).weekday()
         
-        # 基础需求（考虑周末效应）
-        weekend_factor = 1.3 if day_of_week >= 5 else 1.0
+        # 周末效应
+        weekend_factor = 1.35 if day_of_week >= 5 else 1.0
         
-        # 昼夜需求波动
-        base_demand = 60 + 25 * math.sin((hour - 8) * math.pi / 12)
+        # ===== 关键改进：大幅拉大峰谷差距 =====
+        # 用确定性基础值 + 小幅随机波动（而非纯随机）
+        if 17 <= hour <= 20:
+            # 晚高峰：绝对最高，120~155单
+            base_demand = 120 + random.uniform(5, 35)
+        elif 8 <= hour <= 10:
+            # 早高峰：次高，75~105单
+            base_demand = 75 + random.uniform(10, 30)
+        elif 11 <= hour <= 14:
+            # 午间：中等偏上，45~70单
+            base_demand = 45 + random.uniform(5, 25)
+        elif 15 <= hour <= 16:
+            # 下午前段：中低，30~50单
+            base_demand = 30 + random.uniform(5, 20)
+        elif 21 <= hour <= 23:
+            # 晚间回落：20~40单
+            base_demand = 20 + random.uniform(5, 20)
+        elif 6 <= hour <= 7:
+            # 早间起步：25~45单
+            base_demand = 25 + random.uniform(5, 20)
+        elif 0 <= hour <= 5:
+            # 凌晨低谷：极低，5~18单
+            base_demand = 5 + random.uniform(2, 13)
+        else:
+            # 其他时段：15~35单
+            base_demand = 15 + random.uniform(5, 20)
         
-        # 季节性因素（假设夏季需求更高）
+        # 季节性因素
         month_factor = 1.1 + 0.2 * math.sin((now.month - 7) * math.pi / 6)
         
-        # 随机波动
-        noise = random.uniform(-8, 12)
+        # 微小随机噪声
+        noise = random.uniform(-5, 8)
         
         total_demand = base_demand * weekend_factor * month_factor + noise
         
@@ -984,21 +1020,50 @@ _inv_counter = 0
 
 
 def _init_inventory():
-    if warehouse_inventory:
-        return
-    products = [
-        ("冷冻牛肉", "frozen", "肉类", -20), ("冷冻海鲜", "frozen", "海鲜", -22),
+    """初始化库存数据（支持刷新重新生成）"""
+    global warehouse_inventory, _inv_counter
+    warehouse_inventory = []
+    _inv_counter = 0
+    
+    # 丰富的产品列表（覆盖各温区）
+    all_products = [
+        # 冷冻区产品
+        ("冷冻牛肉", "frozen", "肉类", -20), ("冷冻猪肉", "frozen", "肉类", -18),
+        ("冷冻海鲜", "frozen", "海鲜", -22), ("冷冻虾类", "frozen", "海鲜", -20),
         ("冰淇淋", "frozen", "乳制品", -18), ("速冻水饺", "frozen", "面食", -18),
-        ("鲜牛奶", "refrigerated", "乳制品", 2), ("草莓", "refrigerated", "水果", 1),
-        ("三文鱼", "refrigerated", "海鲜", 0), ("鲜切花", "refrigerated", "花卉", 3),
+        ("速冻汤圆", "frozen", "面食", -18), ("冷冻蔬菜", "frozen", "蔬菜", -15),
+        # 冷藏区产品
+        ("鲜牛奶", "refrigerated", "乳制品", 2), ("酸奶", "refrigerated", "乳制品", 4),
+        ("草莓", "refrigerated", "水果", 1), ("蓝莓", "refrigerated", "水果", 2),
+        ("三文鱼", "refrigerated", "海鲜", 0), ("金枪鱼", "refrigerated", "海鲜", 0),
+        ("鲜切花", "refrigerated", "花卉", 3), ("冷藏果汁", "refrigerated", "饮品", 2),
+        ("奶酪", "refrigerated", "乳制品", 4), ("豆腐", "refrigerated", "豆制品", 3),
+        # 恒温区产品
         ("苹果", "ambient", "水果", 18), ("土豆", "ambient", "蔬菜", 16),
-        ("巧克力", "ambient", "零食", 20), ("药品", "ambient", "医药", 20),
+        ("巧克力", "ambient", "零食", 20), ("药品疫苗", "ambient", "医药", 20),
+        ("红酒", "ambient", "酒类", 16), ("大米", "ambient", "粮食", 20),
+        ("饮料", "ambient", "饮品", 22), ("干果坚果", "ambient", "零食", 18),
     ]
+    
     now = datetime.utcnow()
-    for i, (name, zone, cat, temp) in enumerate(products):
-        for wh in WAREHOUSES:
-            global _inv_counter
+    
+    # 为每个仓库分配不同组合的产品（避免重复）
+    for wh_idx, wh in enumerate(WAREHOUSES):
+        # 每个仓库分配不同的产品子集
+        start_idx = wh_idx * 3
+        wh_products = all_products[start_idx:start_idx + 9] + all_products[wh_idx % 6:wh_idx % 6 + 3]
+        
+        for name, zone, cat, temp in wh_products:
             _inv_counter += 1
+            # 不同仓库同一产品的数量差异
+            qty_base = random.randint(800, 7000) if zone == "frozen" else random.randint(300, 5000)
+            shelf_life = random.randint(10, 180)
+            days_since_prod = random.randint(1, min(shelf_life - 6, 90))
+            
+            max_expiry = shelf_life - days_since_prod
+            expiry_days = random.randint(3, max(max_expiry, 8))
+            is_near_expiry = expiry_days <= 5
+            
             warehouse_inventory.append({
                 "id": f"INV-{_inv_counter:04d}",
                 "warehouse_id": wh["id"],
@@ -1008,16 +1073,19 @@ def _init_inventory():
                 "zone": zone,
                 "zone_label": ZONE_CONFIG[zone]["name"],
                 "target_temp_c": temp,
-                "quantity_kg": random.randint(500, 8000),
+                "quantity_kg": qty_base,
                 "unit": "kg",
-                "shelf_life_days": random.randint(5, 180),
-                "production_date": (now - timedelta(days=random.randint(1, 60))).strftime("%Y-%m-%d"),
-                "expiry_date": (now + timedelta(days=random.randint(3, 120))).strftime("%Y-%m-%d"),
-                "status": "normal",
+                "shelf_life_days": shelf_life,
+                "production_date": (now - timedelta(days=days_since_prod)).strftime("%Y-%m-%d"),
+                "expiry_date": (now + timedelta(days=expiry_days)).strftime("%Y-%m-%d"),
+                "status": "near_expiry" if is_near_expiry else "normal",
                 "last_updated": now.isoformat(),
             })
     
-    for item in warehouse_inventory[:6]:
+    # 随机标记部分为临期（确保有6项左右）
+    normal_items = [i for i in warehouse_inventory if i["status"] == "normal"]
+    near_expiry_candidates = random.sample(normal_items, min(6, len(normal_items)))
+    for item in near_expiry_candidates:
         item["status"] = "near_expiry"
         item["expiry_date"] = (now + timedelta(days=random.randint(1, 5))).strftime("%Y-%m-%d")
 
@@ -1202,6 +1270,21 @@ async def warehouse_inventory_summary(
     }
 
 
+@router.post("/refresh-inventory")
+async def refresh_inventory(
+    user: dict = Depends(get_current_user),
+):
+    """刷新/重新生成库存数据（让刷新按钮生效）"""
+    _init_inventory()
+    # 返回刷新后的摘要
+    summary_result = await warehouse_inventory_summary(user)
+    return {
+        "code": 200,
+        "message": "库存数据已刷新",
+        "data": summary_result.get("data", {}),
+    }
+
+
 # ==================== 联动模块接口 ====================
 @router.get("/integration-status")
 async def get_integration_status(
@@ -1220,4 +1303,132 @@ async def get_integration_status(
         "resource_tracking_enabled": True,
         "auto_allocation_enabled": True,
         "ai_forecast_enabled": True,
+    }
+
+
+# ==================== 老板看板接口 ====================
+
+@router.get("/boss-finance")
+async def get_boss_finance(
+    user: dict = Depends(require_role("admin")),
+):
+    """老板看板 - 经营财务数据（中等规模冷链企业，30车5仓）"""
+    from datetime import date, timedelta
+    today = date.today()
+    weekdays_cn = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    
+    # 日收入模拟：冷链企业日均 4~9 万，周末略高
+    daily_revenue = []
+    base_revenues = [48000, 52000, 61000, 78000, 85000, 72000, 55000]  # 周一~周日基准
+    for i in range(7):
+        d = today - timedelta(days=6 - i)
+        base = base_revenues[d.weekday()]
+        daily_revenue.append({
+            "date": f"{d.month}/{d.day}",
+            "weekday": weekdays_cn[d.weekday()],
+            "revenue": int(base + random.uniform(-5000, 8000)),
+        })
+    
+    # 月度成本构成（与营收匹配，利润率 12~18%）
+    monthly_gross = sum(d["revenue"] for d in daily_revenue) * 4.3  # 月营收约 110~130 万
+    cost_breakdown = [
+        {"name": "燃油费", "amount": int(monthly_gross * 0.22), "pct": 22},
+        {"name": "人工成本", "amount": int(monthly_gross * 0.18), "pct": 18},
+        {"name": "车辆折旧与维护", "amount": int(monthly_gross * 0.14), "pct": 14},
+        {"name": "冷库运营电费", "amount": int(monthly_gross * 0.11), "pct": 11},
+        {"name": "保险与路桥费", "amount": int(monthly_gross * 0.06), "pct": 6},
+        {"name": "仓储租赁费", "amount": int(monthly_gross * 0.08), "pct": 8},
+        {"name": "其他运营费用", "amount": int(monthly_gross * 0.05), "pct": 5},
+    ]
+    
+    monthly_cost = sum(c["amount"] for c in cost_breakdown)
+    monthly_profit = monthly_gross - monthly_cost
+    
+    return {
+        "month": today.month,
+        "monthly_revenue": monthly_gross,
+        "monthly_cost": monthly_cost,
+        "monthly_profit": monthly_profit,
+        "profit_margin": round(monthly_profit / max(monthly_gross, 1) * 100, 1),
+        "daily_revenue": daily_revenue,
+        "cost_breakdown": cost_breakdown,
+    }
+
+
+@router.get("/boss-driver-performance")
+async def get_boss_driver_performance(
+    user: dict = Depends(require_role("admin")),
+):
+    """老板看板 - 司机绩效排行（30车对应10位活跃司机）"""
+    import random
+    
+    # 真实感司机数据（姓名+车牌号匹配）
+    driver_data = [
+        ("李强", "沪B·77128"), ("刘洋", "皖N·81193"), ("吴涛", "鄂V·66646"),
+        ("张伟", "鲁Q·K2839"), ("周明", "浙F·U4435"), ("陈刚", "苏E·M5561"),
+        ("赵军", "豫T·W6646"), ("王磊", "京F·P3882"), ("孙鹏", "粤A·J7120"),
+        ("郑凯", "川A·K9234"),
+    ]
+    
+    drivers = []
+    random.seed(42)
+    for idx, (name, plate) in enumerate(driver_data):
+        on_time_rate = random.randint(89, 99)
+        orders = random.randint(22, 48)  # 月均 22~48 单
+        mileage = random.randint(9000, 20000)  # 月里程
+        fuel = random.randint(4500, 10000)  # 月油耗成本
+        rating = round(random.uniform(4.3, 5.0), 1)
+        violations = random.randint(0, 4)  # 温控违规次数
+        # 综合绩效分：准时率35% + 评分30% + 违规扣分25% + 单量奖励10%
+        score = int(on_time_rate * 0.35 + min(rating * 20, 100) * 0.30 
+                    + (100 - violations * 6) * 0.25 + min(orders / 50 * 10, 10))
+        
+        drivers.append({
+            "driver_id": f"D{1001 + idx}",
+            "name": name,
+            "vehicle_plate": plate,
+            "monthly_orders": orders,
+            "on_time_rate": on_time_rate,
+            "total_mileage_km": mileage,
+            "fuel_cost_yuan": fuel,
+            "customer_rating": rating,
+            "temp_violations": violations,
+            "performance_score": max(65, min(98, score)),
+        })
+    
+    drivers.sort(key=lambda x: -x["performance_score"])
+    
+    return {
+        "avg_on_time_rate": round(sum(d["on_time_rate"] for d in drivers) / len(drivers), 1),
+        "avg_rating": round(sum(d["customer_rating"] for d in drivers) / len(drivers), 2),
+        "total_violations": sum(d["temp_violations"] for d in drivers),
+        "drivers": drivers,
+    }
+
+
+@router.get("/boss-customer-analysis")
+async def get_boss_customer_analysis(
+    user: dict = Depends(require_role("admin")),
+):
+    """老板看板 - 客户分析（与30车5仓规模匹配的TOP客户）"""
+    customers = [
+        {"name": "盒马鲜生", "industry": "生鲜电商", "monthly_orders": 86, "monthly_revenue": 520000, "avg_order_value": 6047},
+        {"name": "山姆会员店", "industry": "零售连锁", "monthly_orders": 62, "monthly_revenue": 480000, "avg_order_value": 7742},
+        {"name": "美团买菜", "industry": "O2O平台", "monthly_orders": 95, "monthly_revenue": 380000, "avg_order_value": 4000},
+        {"name": "叮咚买菜", "industry": "生鲜配送", "monthly_orders": 78, "monthly_revenue": 310000, "avg_order_value": 3974},
+        {"name": "永辉超市", "industry": "商超零售", "monthly_orders": 45, "monthly_revenue": 260000, "avg_order_value": 5778},
+        {"name": "大润发", "industry": "商超零售", "monthly_orders": 38, "monthly_revenue": 220000, "avg_order_value": 5789},
+        {"name": "钱大妈", "industry": "社区生鲜", "monthly_orders": 52, "monthly_revenue": 185000, "avg_order_value": 3558},
+        {"name": "每日优鲜", "industry": "生鲜电商", "monthly_orders": 41, "monthly_revenue": 150000, "avg_order_value": 3659},
+        {"name": "老乡鸡", "industry": "餐饮连锁", "monthly_orders": 28, "monthly_revenue": 135000, "avg_order_value": 4821},
+        {"name": "奈雪的茶", "industry": "茶饮连锁", "monthly_orders": 22, "monthly_revenue": 98000, "avg_order_value": 4455},
+    ]
+    
+    total_revenue = sum(c["monthly_revenue"] for c in customers)
+    avg_order = total_revenue / len(customers)
+    
+    return {
+        "total_monthly_revenue": total_revenue,
+        "avg_order_value": round(avg_order),
+        "customers": customers,
     }

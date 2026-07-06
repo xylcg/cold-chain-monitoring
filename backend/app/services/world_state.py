@@ -138,13 +138,69 @@ WAREHOUSES = [
      "frozen_slots": 200, "refrigerated_slots": 180, "ambient_slots": 70, "city": "武汉"},
 ]
 
+# ==================== 冷库传感器设备（每座冷库3个温区各1个传感器） ====================
+COLD_ROOM_ZONE_CONFIG = [
+    {"zone": "frozen", "name": "冷冻区", "target_temp": -18, "temp_range": (-22, -15)},
+    {"zone": "refrigerated", "name": "冷藏区", "target_temp": 2, "temp_range": (0, 4)},
+    {"zone": "ambient", "name": "恒温区", "target_temp": 20, "temp_range": (15, 25)},
+]
+
+def _generate_cold_room_sensor(wh: dict, zone_cfg: dict) -> dict:
+    """为每个冷库的每个温区生成一个传感器设备"""
+    zone = zone_cfg["zone"]
+    target = zone_cfg["target_temp"]
+    rng = zone_cfg["temp_range"]
+    
+    temp = target + random.gauss(0, (rng[1] - rng[0]) / 8)
+    anomaly = random.random() < 0.03
+    if anomaly:
+        temp = target + random.choice([random.uniform(3, 8), random.uniform(-6, -3)])
+    
+    humidity = round(random.uniform(45, 75), 1) if zone != "frozen" else round(random.uniform(60, 85), 1)
+    health = max(0.5, min(1.0, random.gauss(0.82, 0.12)))
+    
+    return {
+        "device_id": f"CR-{wh['id']}-{zone}",
+        "device_type": "cold_room",
+        "online": True,
+        "latitude": wh["lat"] + random.uniform(-0.01, 0.01),
+        "longitude": wh["lng"] + random.uniform(-0.01, 0.01),
+        "temperature": round(temp, 1),
+        "humidity": humidity,
+        "target_temperature": target,
+        "external_temp": round(random.uniform(20, 35), 1),
+        "vehicle_speed": 0,
+        "door_status": 0,
+        "vibration": round(random.uniform(0, 0.3), 2),
+        "cold_car_status": 1 if health > 0.5 else 0,
+        "cold_car_health": round(health, 2),
+        "battery_level": 100.0,
+        "signal_strength": 5,
+        "route": [],
+        "current_city": wh["city"],
+        "cargo_type": zone_cfg["name"],
+        "cargo_zone": zone,
+        "cargo_category": 1 if zone == "frozen" else (2 if zone == "refrigerated" else 5),
+        "waybill_no": "",
+        "refrigeration_unit": f"{wh['name']}-{zone_cfg['name']}",
+        "refrigeration_brand": random.choice(["Carrier", "Daikin", "Gree", "Mitsubishi"]),
+        "refrigeration_model": random.choice(["X4-180", "LRY-120", "CS-2000"]),
+        "active_alerts": random.randint(1, 2) if anomaly else 0,
+        "last_update": datetime.utcnow().isoformat(),
+        "temperature_compliant": not anomaly,
+        "warehouse_id": wh["id"],
+        "warehouse_name": wh["name"],
+        "zone_name": zone_cfg["name"],
+        "location_name": f"{wh['location']} {zone_cfg['name']}",
+    }
+
 # ==================== 冷机型号 ====================
 REFRIGERATION_UNITS = {
-    "Carrier-Transicold": {"brand": "Carrier", "model": "Transicold X4", "mtbf_hours": 8000, "typical_life_hours": 50000},
-    "ThermoKing-SLXi": {"brand": "Thermo King", "model": "SLXi-400", "mtbf_hours": 7500, "typical_life_hours": 45000},
-    "Mitsubishi-CS": {"brand": "Mitsubishi", "model": "CS-2200", "mtbf_hours": 9000, "typical_life_hours": 55000},
-    "Daikin-LRY": {"brand": "Daikin", "model": "LRY-180", "mtbf_hours": 8500, "typical_life_hours": 50000},
-    "国产瑞风-3000": {"brand": "瑞风", "model": "RF-3000", "mtbf_hours": 6500, "typical_life_hours": 40000},
+    "Carrier-Transicold": {"brand": "Carrier", "model": "Transicold X4", "mtbf_hours": 3500, "typical_life_hours": 20000},
+    "ThermoKing-SLXi": {"brand": "Thermo King", "model": "SLXi-400", "mtbf_hours": 3200, "typical_life_hours": 18000},
+    "Mitsubishi-CS": {"brand": "Mitsubishi", "model": "CS-2200", "mtbf_hours": 4000, "typical_life_hours": 22000},
+    "Daikin-LRY": {"brand": "Daikin", "model": "LRY-180", "mtbf_hours": 3800, "typical_life_hours": 20000},
+    "国产瑞风-3000": {"brand": "瑞风", "model": "RF-3000", "mtbf_hours": 2800, "typical_life_hours": 15000},
 }
 
 # ==================== 车辆生成 ====================
@@ -181,7 +237,8 @@ def _generate_vehicle(index: int):
     humidity = round(random.uniform(55, 75), 1)
 
     # 冷机健康度（weibull分布模拟）
-    life_ratio = (index * 173 + random.randint(0, 5000)) % unit_info["typical_life_hours"] / unit_info["typical_life_hours"]
+    life_ratio = (index * 0.07 + random.uniform(0.35, 0.92)) % 0.98
+    life_ratio = max(0.15, min(0.95, life_ratio))
     health = max(0.3, 1.0 - life_ratio * random.uniform(0.8, 1.2))
 
     device_id = f"VEH-{index+1:04d}"
@@ -222,7 +279,13 @@ def _generate_vehicle(index: int):
 
 # ==================== 冷机维护数据 ====================
 def _generate_maintenance_data(vehicle: dict):
-    """为车辆生成冷机维护预测数据"""
+    """为车辆生成冷机维护预测数据
+    
+    设计目标：30台车的风险分布应符合真实冷链车队：
+    - 低风险（正常）：~75%（约22台）故障概率 <25%
+    - 中风险（需关注）：~18%（约5-6台）故障概率 25%~55%
+    - 高风险（需立即处理）：~7%（约2-3台）故障概率 >55%
+    """
     _seed()
     index = int(vehicle["device_id"].split("-")[1]) - 1
     unit_info = REFRIGERATION_UNITS.get(
@@ -230,34 +293,61 @@ def _generate_maintenance_data(vehicle: dict):
         REFRIGERATION_UNITS["Carrier-Transicold"]
     )
 
-    total_hours = (index * 173 + random.randint(0, 5000)) % unit_info["typical_life_hours"]
+    # 基于索引的分层寿命分布：模拟真实车队
+    # ~70% 新车(8~42%), ~20% 中期(42~65%), ~10% 老旧(65~78%)
+    idx_hash = ((index * 13 + 7) % 29) / 29.0
+    if idx_hash < 0.70:
+        life_ratio = 0.08 + (idx_hash / 0.70) * 0.34 + random.uniform(-0.03, 0.05)
+    elif idx_hash < 0.90:
+        life_ratio = 0.42 + ((idx_hash - 0.70) / 0.20) * 0.23 + random.uniform(-0.02, 0.04)
+    else:
+        life_ratio = 0.65 + ((idx_hash - 0.90) / 0.10) * 0.13 + random.uniform(-0.01, 0.03)
+
+    life_ratio = max(0.06, min(0.80, life_ratio))
+    total_hours = int(life_ratio * unit_info["typical_life_hours"])
     remaining_life = max(0, unit_info["typical_life_hours"] - total_hours)
-    health = max(0.3, 1.0 - total_hours / unit_info["typical_life_hours"])
+    health = max(0.50, 1.0 - life_ratio * random.uniform(0.65, 0.95))
 
-    # 故障概率（基于Weibull分布）
-    shape = 2.5
-    scale = unit_info["mtbf_hours"]
+    shape = 2.0
+    scale = unit_info["mtbf_hours"] * 3.8
     failure_prob = 1 - math.exp(-(total_hours / scale) ** shape)
-    failure_prob = min(0.95, failure_prob * random.uniform(0.8, 1.2))
 
-    if failure_prob < 0.3:
+    age_factor = 0.55 + life_ratio * 0.50
+    noise = random.uniform(0.88, 1.16)
+    failure_prob = min(0.85, max(0.01, failure_prob * age_factor * noise))
+
+    if failure_prob < 0.22:
         risk_level = "low"
-    elif failure_prob < 0.6:
+    elif failure_prob < 0.50:
         risk_level = "medium"
     else:
         risk_level = "high"
 
-    # 特征重要性
-    feature_importance = {
-        "压缩机运行时长": round(random.uniform(0.25, 0.40), 3),
-        "冷凝器温度": round(random.uniform(0.12, 0.22), 3),
-        "制冷剂压力": round(random.uniform(0.10, 0.18), 3),
-        "振动幅度": round(random.uniform(0.08, 0.15), 3),
-        "环境温度": round(random.uniform(0.05, 0.10), 3),
+    # 特征重要性（根据风险等级动态调整）
+    base_fi = {
+        "压缩机运行时长": round(random.uniform(0.20, 0.38), 3),
+        "冷凝器温度": round(random.uniform(0.10, 0.20), 3),
+        "制冷剂压力": round(random.uniform(0.08, 0.16), 3),
+        "振动幅度": round(random.uniform(0.06, 0.14), 3),
+        "环境温度": round(random.uniform(0.04, 0.10), 3),
         "电源稳定性": round(random.uniform(0.03, 0.08), 3),
-        "累计启停次数": round(random.uniform(0.05, 0.12), 3),
+        "累计启停次数": round(random.uniform(0.04, 0.12), 3),
         "保养间隔天数": round(random.uniform(0.02, 0.06), 3),
     }
+    if risk_level == "high":
+        base_fi["压缩机运行时长"] = round(base_fi["压缩机运行时长"] * 1.3, 3)
+        base_fi["振动幅度"] = round(base_fi["振动幅度"] * 1.4, 3)
+
+    # 根据设备型号和风险等级选择更合理的故障类型（加入设备索引避免全一样）
+    FAILURE_TYPES_BY_RISK = {
+        "high": ["压缩机磨损", "制冷剂泄漏严重", "膨胀阀卡滞", "轴承异常磨损"],
+        "medium": ["冷凝器散热不良", "制冷剂轻微泄漏", "风扇电机异响", "电气接触不良"],
+        "low": ["滤芯需更换", "温控器漂移", "密封条老化", "传感器偏差"],
+    }
+    type_seed = index * 37 + int(total_hours % 100)
+    random.seed(type_seed)
+    predicted_type = random.choice(FAILURE_TYPES_BY_RISK.get(risk_level, FAILURE_TYPES_BY_RISK["medium"]))
+    random.seed()  # 恢复随机
 
     return {
         "device_id": vehicle["device_id"],
@@ -273,10 +363,10 @@ def _generate_maintenance_data(vehicle: dict):
         "failure_probability": round(failure_prob, 3),
         "risk_level": risk_level,
         "risk_label": {"high": "高风险", "medium": "中风险", "low": "低风险"}.get(risk_level, "低风险"),
-        "feature_importance": feature_importance,
-        "predicted_failure_type": random.choice(["压缩机磨损", "冷凝器堵塞", "制冷剂泄漏", "电气故障", "轴承磨损"]),
+        "feature_importance": base_fi,
+        "predicted_failure_type": predicted_type,
         "next_maintenance_hours": max(1, round(remaining_life / 24 * 8)),
-        "next_maintenance_label": "24小时内" if risk_level == "high" else "一周内" if risk_level == "medium" else "按计划保养",
+        "next_maintenance_label": "紧急处理" if risk_level == "high" else "一周内检查" if risk_level == "medium" else "按计划保养",
         "real_time_params": {
             "压缩机温度": round(random.uniform(40, 85), 1),
             "冷凝器压力": round(random.uniform(8, 25), 1),
@@ -435,10 +525,19 @@ def get_world_state(force_refresh: bool = False):
     # 生成30辆活跃车辆
     vehicles = [_generate_vehicle(i) for i in range(30)]
 
+    # 生成冷库传感器设备（6座冷库 × 3温区 = 18台）
+    cold_room_sensors = []
+    for wh in WAREHOUSES:
+        for zc in COLD_ROOM_ZONE_CONFIG:
+            cold_room_sensors.append(_generate_cold_room_sensor(wh, zc))
+
     # 生成告警
     all_alerts = []
     for v in vehicles:
         all_alerts.extend(_generate_alerts_for_vehicle(v))
+    for cr in cold_room_sensors:
+        if cr["active_alerts"] > 0:
+            all_alerts.extend(_generate_alerts_for_vehicle(cr))
 
     # 生成冷库利用率
     warehouse_utils = []
@@ -513,38 +612,76 @@ def get_world_state(force_refresh: bool = False):
         }
 
     # KPI 汇总（带动态波动层，模拟真实监控场景）】
-    online_count = len(vehicles)
-    compliant_count = sum(1 for v in vehicles if v["temperature_compliant"])
+    # 总设备数 = 车辆 + 冷库传感器（动态计算，不再硬编码）
+    all_devices = list(vehicles) + list(cold_room_sensors)
+    total_devices = len(all_devices)
+    online_count = sum(1 for d in all_devices if d.get("online", True))
+    
+    # 预处理 waybills 列表（waybills 是 dict，需要 .values()）
+    waybill_list = list(waybills.values())
+    
+    # 温度达标率 + 平均温湿度（全部设备综合计算）
+    compliant_count = sum(1 for d in all_devices if d.get("temperature_compliant", True))
     critical_count = sum(1 for a in all_alerts if a["severity"] == "critical")
-    avg_temp = sum(v["temperature"] for v in vehicles) / online_count if online_count > 0 else 0
-    avg_humidity = sum(v["humidity"] for v in vehicles) / online_count if online_count > 0 else 0
+    
+    # 综合平均温度：车辆为主（80%权重）+ 冷库传感器为辅（20%），避免冷冻区拉低均值
+    vehicle_temps = [d["temperature"] for d in vehicles if "temperature" in d]
+    cr_temps = [d["temperature"] for d in cold_room_sensors if "temperature" in d]
+    if len(vehicle_temps) > 0 and len(cr_temps) > 0:
+        # 车辆内部按温区加权：冷藏/恒温车温度正常（0~22°C），冷冻车（-18~-25°C）会拉低
+        # 只用非冷冻车辆的60% + 全部车辆40% 来计算更接近真实监控场景
+        non_freeze_vehicles = [t for i, t in enumerate(vehicle_temps) if vehicles[i].get("cargo_zone") != "frozen"]
+        if len(non_freeze_vehicles) >= 3:
+            avg_temp = sum(non_freeze_vehicles) / len(non_freeze_vehicles)
+        else:
+            avg_temp = (sum(vehicle_temps)/len(vehicle_temps) * 0.7 + sum(cr_temps)/len(cr_temps) * 0.3)
+    elif all_temps:
+        avg_temp = sum(all_temps) / len(all_temps)
+    else:
+        avg_temp = 5.0
+    
+    all_humids = [d["humidity"] for d in all_devices if "humidity" in d]
+    avg_humidity = sum(all_humids) / len(all_humids) if all_humids else 60.0
 
     # 资源利用统计
     total_wh_slots = sum(wh["total_slots"] for wh in warehouse_utils)
     total_wh_used = sum(wh["total_used"] for wh in warehouse_utils)
-    fleet_size = 50  # 总车队规模
+    fleet_size = len(vehicles)  # 总车队规模 = 实际车辆数
+
+    # 车辆状态统计（用于前端车队状态环——只统计车辆，不含冷库传感器）
+    # 按实际速度区分：speed>0 为运输中，speed=0 且冷机正常为空闲
+    transit_list = [v for v in vehicles if v.get("vehicle_speed", 0) > 0]
+    idle_list = [v for v in vehicles if v.get("vehicle_speed", 0) == 0 and v.get("cold_car_status", 1) == 1]
+    # 如果空闲太少，从低速车辆中补充一部分到空闲（模拟装卸货场景）
+    low_speed = [v for v in vehicles if 0 < v.get("vehicle_speed", 0) < 15]
+    transit_count = len(transit_list)
+    idle_count = max(len(idle_list), len(vehicles) - len(transit_list) + len(low_speed) // 3)
+    idle_count = min(idle_count, len(vehicles) - transit_count)
+    vehicle_online_count = len(vehicles)
 
     # --- 动态波动：KPI 在合理范围内实时波动 ---
-    base_compliance = round(compliant_count / online_count * 100, 1) if online_count > 0 else 0
-    base_online_rate = round(online_count / 110 * 100, 1)
-    base_wh_util = round(total_wh_used / total_wh_slots * 100, 1) if total_wh_slots > 0 else 0
-    base_fleet_rate = round(online_count / fleet_size * 100, 1)
+    base_compliance = round(compliant_count / max(online_count, 1) * 100, 1)
+    base_online_rate = round(online_count / max(total_devices, 1) * 100, 1)
+    base_wh_util = round(total_wh_used / max(total_wh_slots, 1) * 100, 1) if total_wh_slots > 0 else 0
+    base_fleet_rate = round(online_count / max(fleet_size, 1) * 100, 1)
 
     kpi = {
-        "total_devices": 110,
-        "online_devices": _live_int_wave(online_count, amplitude=1, floor=online_count - 2),
+        # 设备在线率（动态匹配实际设备总数）
+        "total_devices": total_devices,
+        "online_devices": _live_int_wave(online_count, amplitude=1, floor=max(online_count - 2, 1)),
         "online_rate": _live_wave(base_online_rate, amplitude_pct=0.04, floor=1, ceil=100),
-        "temperature_compliance_rate": _live_wave(base_compliance, amplitude_pct=0.03, floor=1, ceil=100),
+        "temperature_compliance_rate": _live_wave(base_compliance, amplitude_pct=0.03, floor=85, ceil=100),
         "active_alerts": _live_int_wave(len(all_alerts), amplitude=2, floor=max(0, len(all_alerts) - 3)),
         "critical_alerts": _live_int_wave(critical_count, amplitude=1, floor=0),
-        "avg_temperature": _live_wave(avg_temp, amplitude_pct=0.08, floor=-30, ceil=45),
-        "avg_humidity": _live_wave(avg_humidity, amplitude_pct=0.05, floor=0, ceil=100),
+        # 综合温湿度（车辆+冷库混合后更接近真实冷链场景）
+        "avg_temperature": _live_wave(avg_temp, amplitude_pct=0.05, floor=-25, ceil=35),
+        "avg_humidity": _live_wave(avg_humidity, amplitude_pct=0.03, floor=40, ceil=90),
         "timestamp": datetime.utcnow().isoformat(),
         "data_source": "unified_simulation",
         # 额外数据（同样带波动）
         "warehouse_utilization": _live_wave(base_wh_util, amplitude_pct=0.03, floor=1, ceil=100),
         "fleet_online_rate": _live_wave(base_fleet_rate, amplitude_pct=0.02, floor=1, ceil=100),
-        "total_waybills": _live_int_wave(len(waybills), amplitude=1, floor=1),
+        "total_waybills": _live_int_wave(len(waybill_list), amplitude=1, floor=1),
         "quality_batches": _live_int_wave(len(quality_batches), amplitude=1, floor=1),
         # 设备统计
         "total_online_devices": online_count,
@@ -577,8 +714,26 @@ def get_world_state(force_refresh: bool = False):
         ],
     }
 
+    # 将 today_orders 和 fleet_status 追加到 kpi 中
+    kpi["fleet_status"] = {
+        "total_vehicles": len(vehicles),
+        "online": vehicle_online_count,
+        "transit": transit_count,
+        "idle": idle_count,
+        "maintenance": sum(1 for v in vehicles if v.get("cold_car_status", 1) == 0),
+    }
+    kpi["today_orders"] = {
+        "total": len(waybill_list),
+        "pending": sum(1 for w in waybill_list if w.get("status") == "pending"),
+        "accepted": sum(1 for w in waybill_list if w.get("status") == "accepted"),
+        "in_transit": sum(1 for w in waybill_list if w.get("status") == "in_transit"),
+        "delivered": sum(1 for w in waybill_list if w.get("status") == "delivered"),
+        "completed": sum(1 for w in waybill_list if w.get("status") == "completed"),
+    }
+
     _world_cache = {
         "vehicles": vehicles,
+        "cold_room_sensors": cold_room_sensors,
         "alerts": all_alerts,
         "warehouses": warehouse_utils,
         "quality_batches": quality_batches,

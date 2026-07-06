@@ -12,6 +12,88 @@ _fences: Dict[str, FenceInDB] = {}
 _fence_events: Dict[str, FenceEvent] = {}
 _sync_time: float = 0
 _SYNC_INTERVAL = 60
+_demo_events_seeded: bool = False
+
+
+def _seed_demo_events():
+    """为演示环境生成围栏事件种子数据（仅在首次调用时执行）"""
+    global _demo_events_seeded
+    if _demo_events_seeded:
+        return
+    _demo_events_seeded = True
+
+    # 确保围栏数据已同步
+    _sync_with_world_state()
+
+    # 取前8个活跃围栏作为事件目标
+    active_fences = [f for f in _fences.values() if f.active][:8]
+    if not active_fences:
+        return
+
+    import random
+    random.seed(42)
+
+    demo_vehicles = ["V-001", "V-002", "V-003", "V-004", "V-005"]
+    event_types = ["enter", "exit", "deviation", "stay", "stay_severe"]
+    event_type_labels = {
+        "enter": "进入围栏区域",
+        "exit": "离开围栏区域",
+        "deviation": "路线偏离告警",
+        "stay": "异常停留提醒",
+        "stay_severe": "严重超时停留",
+    }
+    level_map = {
+        "enter": AlertLevel.INFO, "exit": AlertLevel.INFO,
+        "deviation": AlertLevel.SEVERE, "stay": AlertLevel.WARNING,
+        "stay_severe": AlertLevel.SEVERE,
+    }
+
+    now = datetime.utcnow()
+    event_idx = 0
+    for fence in active_fences:
+        # 每个围栏生成 2~4 条事件
+        num_events = random.randint(2, 4)
+        for i in range(num_events):
+            et = event_types[random.randint(0, len(event_types) - 1)]
+            vid = demo_vehicles[random.randint(0, len(demo_vehicles) - 1)]
+            hours_ago = random.uniform(0.5, 23)
+            event_time = now - timedelta(hours=hours_ago)
+
+            # 根据围栏类型构造位置
+            if fence.fence_type.value == "circle" and fence.data:
+                c = fence.data.get("center", {})
+                lat = c.get("lat", 39.9042) + random.uniform(-0.01, 0.01)
+                lng = c.get("lng", 116.4074) + random.uniform(-0.01, 0.01)
+            else:
+                lat = 30.0 + random.uniform(-10, 10)
+                lng = 110.0 + random.uniform(-15, 15)
+
+            event_id = f"DEMO-E{event_idx:03d}"
+            desc_prefix = event_type_labels.get(et, "围栏事件")
+            plate = f"冷A-{int(vid.split('-')[-1]):04d}"
+            desc = f"{desc_prefix} | 车辆 {plate} | 围栏 {fence.name}"
+
+            event = FenceEvent(
+                event_id=event_id,
+                fence_id=fence.fence_id,
+                fence_name=fence.name,
+                fence_type=fence.fence_type,
+                fence_category=fence.category,
+                vehicle_id=vid,
+                plate_number=plate,
+                event_type=et,
+                event_time=event_time,
+                location={"lat": lat, "lng": lng},
+                previous_location={"lat": lat + 0.005, "lng": lng - 0.005},
+                alert_level=level_map.get(et, AlertLevel.WARNING),
+                description=desc,
+                temperature_c=round(random.uniform(-2.0, 8.0), 1),
+                heartbeat_status="online",
+                stay_duration_minutes=random.choice([None, None, 12, 25, 45]),
+                resolved=random.random() < 0.35,  # 约35%已处理
+            )
+            _fence_events[event_id] = event
+            event_idx += 1
 
 
 def _sync_with_world_state():
@@ -187,6 +269,7 @@ def get_fence_events(
     resolved: Optional[bool] = None,
     hours: Optional[int] = None,
 ) -> List[FenceEvent]:
+    _seed_demo_events()
     result = []
     now = datetime.utcnow()
     for event in _fence_events.values():
@@ -308,6 +391,7 @@ def get_all_fences_geojson() -> Dict[str, any]:
 
 def get_fence_stats() -> Dict[str, any]:
     _sync_with_world_state()
+    _seed_demo_events()
     total = len(_fences)
     by_type = {}
     by_category = {}

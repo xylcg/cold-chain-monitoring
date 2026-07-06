@@ -52,6 +52,8 @@ ALERT_TYPES = {
     "hs_temp_fluctuation": {"category": "高敏专项", "label": "高敏货物温度微波动", "default_severity": "severe"},
     "hs_delay": {"category": "高敏专项", "label": "高敏货物时效延误", "default_severity": "severe"},
     "hs_offline": {"category": "高敏专项", "label": "高敏货物设备短暂离线", "default_severity": "critical"},
+    "humidity_high": {"category": "环境类", "label": "湿度过高", "default_severity": "normal"},
+    "vibration_high": {"category": "行驶类", "label": "振动异常", "default_severity": "normal"},
 }
 
 

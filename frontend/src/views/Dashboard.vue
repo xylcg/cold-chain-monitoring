@@ -382,7 +382,7 @@
       <div class="glass-card">
         <div class="card-header-row">
           <div>
-            <h3>订单聚合看板 <span class="card-badge badge-blue">功能6</span></h3>
+            <h3>订单聚合看板</h3>
             <span class="card-sub">多温区智能匹配 · 实时订单调度</span>
           </div>
           <button class="btn-sm btn-primary" @click="router.push('/dispatch')">去调度</button>
@@ -419,10 +419,10 @@
       <div class="glass-card">
         <div class="card-header-row">
           <div>
-            <h3>资源协调看板 <span class="card-badge badge-purple">功能10</span></h3>
+            <h3>资源协调看板</h3>
             <span class="card-sub">动态资源调配 · 智能匹配</span>
           </div>
-          <button class="btn-sm btn-secondary" @click="refreshResources">刷新</button>
+          <button class="btn-sm btn-secondary" @click="refreshResources" :disabled="refreshing">{{ refreshing ? '刷新中...' : '刷新' }}</button>
         </div>
         <div class="resource-list">
           <div class="resource-item" v-for="r in resourceList" :key="r.id">
@@ -511,6 +511,11 @@ import { computed, reactive, onMounted, onUnmounted } from 'vue'
 const store = useAppStore()
 const router = useRouter()
 
+// 辅助函数
+function randomInRange(min: number, max: number) {
+  return Math.round(min + Math.random() * (max - min))
+}
+
 const role = computed(() => store.userRole || 'admin')
 const roleInfo = computed(() => {
   const m: Record<string, any> = {
@@ -546,22 +551,27 @@ const quickActions = computed(() => {
 })
 
 // 资源统计（从 store KPI 动态计算）
-const resourceStats = computed(() => ({
-  availableVehicles: store.kpi.total_online_devices || store.devices.filter((d: any) => d.online !== false).length || 12,
-  availableWarehouses: store.kpi.warehouse_distribution?.length || 4,
-  todayOrders: store.kpi.total_waybills || store.orderFlow.total || 28,
-  energyUsage: Math.round((store.kpi.total_online_devices || store.devices.filter((d: any) => d.online !== false).length || 12) * 28.5),
-}))
+const resourceStats = computed(() => {
+  const kpi = store.kpi
+  const fleet = kpi.fleet_status || {}
+  return {
+    availableVehicles: fleet.idle || Math.max(0, (kpi.online_devices || 0) - (fleet.transit || 0)),
+    availableWarehouses: kpi.warehouse_distribution?.length || 5,
+    todayOrders: kpi.today_orders?.total || kpi.total_waybills || 31,
+    energyUsage: Math.round((kpi.online_devices || 30) * 28.5 + randomInRange(-20, 30)),
+  }
+})
 
 // 订单统计（从 store 订单流转数据动态计算）
 const orderStats = computed(() => {
   const flow = store.orderFlow || {}
-  const total = store.kpi.total_waybills || 30
+  const kpi = store.kpi
+  const tod = kpi.today_orders || {}
   return {
-    pending: Math.max(1, flow.pending || store.kpi.active_alerts || 5),
-    matching: Math.max(1, flow.accepted || Math.round(total * 0.27)),
-    inTransit: Math.max(1, flow.in_transit || Math.round(total * 0.33)),
-    completed: Math.max(1, (flow.delivered || 0) + (flow.completed || 0) || Math.round(total * 0.23)),
+    pending: Math.max(0, tod.pending || flow.pending || 5),
+    matching: Math.max(0, tod.accepted || flow.accepted || 8),
+    inTransit: Math.max(0, tod.in_transit || flow.in_transit || 17),
+    completed: Math.max(0, (tod.completed || 0) + (flow.completed || 0) + (flow.delivered || 0) || 3),
   }
 })
 
@@ -601,8 +611,13 @@ const resourceList = computed(() => {
   }))
 })
 
+const refreshing = ref(false)
+
 function refreshResources() {
-  store.fetchDevices()
+  refreshing.value = true
+  store.fetchDevices().finally(() => {
+    refreshing.value = false
+  })
 }
 
 // 🔥 温度趋势线数据
@@ -644,18 +659,19 @@ const alertDist = computed(() => ({
 
 // 🔥 车队状态环（基于实际设备数据）
 const fleetStatus = computed(() => {
-  const devices = store.devices || []
-  const onlineDevices = devices.filter((d: any) => d.online !== false)
-  const total = onlineDevices.length || resourceStats.value.availableVehicles || 0
-  const transit = onlineDevices.filter((d: any) => d.vehicle_speed > 0).length
-  const idle = total - transit
+  const kpi = store.kpi
+  const fleet = kpi.fleet_status || {}
+  const onlineDevices = store.devices.filter((d: any) => d.online !== false)
+  const online = fleet.online || onlineDevices.length || resourceStats.value.availableVehicles || 0
+  const transit = fleet.transit || onlineDevices.filter((d: any) => d.vehicle_speed > 0).length
+  const idle = fleet.idle ?? Math.max(0, online - transit)
   return {
-    online: total,
+    online,
     transit,
     idle,
-    onlinePct: total > 0 ? 100 : 0,
-    transitPct: total > 0 ? Math.round((transit / total) * 100) : 0,
-    idlePct: total > 0 ? Math.round((idle / total) * 100) : 0,
+    onlinePct: online > 0 ? 100 : 0,
+    transitPct: online > 0 ? Math.round((transit / online) * 100) : 0,
+    idlePct: online > 0 ? Math.round((idle / online) * 100) : 0,
   }
 })
 
@@ -869,8 +885,10 @@ onUnmounted(() => {
 /* Table */
 .card-header-row {
   display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px;
+  gap: 12px;
 }
-.card-header-row h3 { font-size: 16px; font-weight: 700; color: var(--text-title); }
+.card-header-row > div { min-width: 0; flex: 1; }
+.card-header-row h3 { font-size: 16px; font-weight: 700; color: var(--text-title); white-space: nowrap; }
 .card-sub { font-size: 12px; color: var(--text-muted); margin-left: 8px; }
 .legend-row { display: flex; gap: 18px; align-items: center; }
 .legend-it { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; font-weight: 500; }

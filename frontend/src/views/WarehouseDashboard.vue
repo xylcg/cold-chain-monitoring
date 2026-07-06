@@ -542,17 +542,6 @@
         <span class="card-badge badge-green">功能7 · AI品质质检</span>
       </div>
 
-      <!-- 统计卡片 -->
-      <div class="stats-row">
-        <div class="stat-card" v-for="s in qualityStatsCards" :key="s.label">
-          <div class="stat-icon" :style="{background:s.bg,color:s.color}">{{ s.icon }}</div>
-          <div class="stat-info">
-            <div class="stat-value" :style="{color:s.color}">{{ s.value }}</div>
-            <div class="stat-label">{{ s.label }}</div>
-          </div>
-        </div>
-      </div>
-
       <!-- AI识别上传区 -->
       <div class="glass-card">
         <div class="card-header">
@@ -917,7 +906,6 @@ const recentLogs = computed(() => {
 function refreshAll() {
   loadOrderReview()
   refreshInventory()
-  loadQualityStats()
   loadPendingReviews()
   refreshMaintenance()
   ElMessage.success('数据已刷新')
@@ -929,14 +917,6 @@ const selectedFile = ref<File | null>(null)
 const uploadInput = ref<HTMLInputElement | null>(null)
 const assessing = ref(false)
 const assessResult = ref<any>(null)
-const qualityStats = ref<any>({})
-
-const qualityStatsCards = computed(() => [
-  { label: '批次总数', value: qualityStats.value.total_batches || 0, icon: '📦', bg: 'rgba(0,168,255,0.12)', color: 'var(--accent)' },
-  { label: '瑕疵率', value: (qualityStats.value.defect_rate || 0) + '%', icon: '⚠', bg: 'var(--red-bg)', color: 'var(--red)' },
-  { label: '平均品质评分', value: (qualityStats.value.avg_quality_score || 0), icon: '⭐', bg: 'rgba(0,210,160,0.12)', color: 'var(--teal)' },
-  { label: '支持品类', value: qualityStats.value.products_supported || 0, icon: '🏷', bg: 'rgba(124,58,237,0.12)', color: 'var(--aurora)' },
-])
 
 function getGradeColor(grade: string) {
   if (!grade) return '#6b7280'
@@ -982,10 +962,6 @@ async function doAssess() {
     }
   } catch { ElMessage.error('品质评估失败') }
   finally { assessing.value = false }
-}
-
-async function loadQualityStats() {
-  try { const sRes = await qualityAPI.getStats(); qualityStats.value = sRes } catch {}
 }
 
 // ====== 冷机故障预测（功能4） ======
@@ -1317,7 +1293,6 @@ async function confirmOrderReject() {
 
 onMounted(() => {
   store.startAutoRefresh(8000)
-  loadQualityStats()
   refreshMaintenance()
   loadPendingReviews()
   loadReviewStats()
