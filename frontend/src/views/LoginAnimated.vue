@@ -369,7 +369,9 @@ async function handleLogin() {
     store.setUserInfo(res.username || form.username, res.user_role)
     loginResult.value = 'success'
     const homeMap: Record<string, string> = { admin: '/dashboard', manager: '/boss', driver: '/driver-app', warehouse: '/warehouse', customer: '/customer-app' }
-    setTimeout(() => { ElMessage.success('登录成功'); router.push(homeMap[res.user_role] || '/dashboard') }, 1500)
+    const isMobile = window.innerWidth < 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+    const target = isMobile ? '/mobile' : (homeMap[res.user_role] || '/dashboard')
+    setTimeout(() => { ElMessage.success('登录成功'); router.push(target) }, 1500)
   } catch {
     const validUsers: Record<string, string> = { admin: 'admin', driver01: 'driver', manager01: 'manager', warehouse01: 'warehouse', customer01: 'customer' }
     const valid = validUsers[form.username] && form.password === '123456'
@@ -377,9 +379,11 @@ async function handleLogin() {
       loginResult.value = 'success'
       const role = validUsers[form.username]
       const homeMap: Record<string, string> = { admin: '/dashboard', manager: '/boss', driver: '/driver-app', warehouse: '/warehouse', customer: '/customer-app' }
+      const isMobile = window.innerWidth < 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+      const target = isMobile ? '/mobile' : (homeMap[role] || '/dashboard')
       store.setToken('mock-token-' + form.username)
       store.setUserInfo(form.username, role)
-      setTimeout(() => { ElMessage.success('登录成功'); router.push(homeMap[role] || '/dashboard') }, 1500)
+      setTimeout(() => { ElMessage.success('登录成功'); router.push(target) }, 1500)
     } else {
       loginResult.value = 'error'
       errorMsg.value = '账号或密码错误，请重试'

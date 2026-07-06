@@ -1,11 +1,21 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
+/** 检测是否为移动端设备 */
+function isMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.innerWidth < 768 || /Android|iPhone|iPad|iPod|Mobile|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+}
+
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     {
       path: '/',
-      redirect: '/dashboard',
+      redirect: () => {
+        // 服务端渲染时默认PC，客户端根据设备动态重定向
+        if (typeof window !== 'undefined' && isMobileDevice()) return '/mobile'
+        return '/dashboard'
+      },
     },
     {
       path: '/login',
@@ -18,6 +28,12 @@ const router = createRouter({
       name: 'DriverApp',
       component: () => import('@/views/MobileApp.vue'),
       meta: { title: '司机工作台', roles: ['driver'] },
+    },
+    {
+      path: '/mobile',
+      name: 'MobileApp',
+      component: () => import('@/views/MobileApp.vue'),
+      meta: { title: '冷链物流智能监控平台', publicMobile: true },
     },
     {
       path: '/customer-app',
@@ -147,15 +163,17 @@ const router = createRouter({
 // admin/warehouse → PC端 (MainLayout)
 // driver → 移动端 /driver-app
 // customer → 移动端 /customer-app
+// 手机设备 → /mobile（移动端监控）
 router.beforeEach((to, _from, next) => {
   const token = localStorage.getItem('token')
   const userRole = localStorage.getItem('userRole') || ''
   const isDriver = userRole === 'driver'
   const isCustomer = userRole === 'customer'
-  const homePath = isDriver ? '/driver-app' : isCustomer ? '/customer-app' : '/dashboard'
+  const mobile = isMobileDevice()
+  const homePath = isDriver ? '/driver-app' : isCustomer ? '/customer-app' : (mobile ? '/mobile' : '/dashboard')
 
-  // 公开页面无需校验（消费者扫码查询）
-  if (to.meta.public) {
+  // 公开页面无需校验（消费者扫码查询 + 移动端）
+  if (to.meta.public || to.meta.publicMobile) {
     return next()
   }
 
@@ -168,7 +186,7 @@ router.beforeEach((to, _from, next) => {
   // 未登录 → 跳转登录
   if (!token) return next('/login')
 
-  // 访问根路径 → 根据角色跳转
+  // 访问根路径 → 根据角色+设备跳转
   if (to.path === '/') return next(homePath)
 
   // 角色权限检查 - admin 拥有所有页面访问权限
@@ -185,9 +203,9 @@ router.beforeEach((to, _from, next) => {
     }
   }
 
-  // driver/customer 只允许访问自己的移动端页面
-  if ((isDriver || isCustomer) && to.path !== '/login') {
-    const mobilePaths = isDriver ? ['/driver-app'] : ['/customer-app']
+  // driver/customer 只允许访问自己的移动端页面（但 /mobile 对所有角色开放，已在上面 publicMobile 处理）
+  if ((isDriver || isCustomer) && to.path !== '/login' && !to.meta.publicMobile) {
+    const mobilePaths = isDriver ? ['/driver-app', '/mobile'] : ['/customer-app']
     if (!mobilePaths.includes(to.path)) {
       return next(homePath)
     }

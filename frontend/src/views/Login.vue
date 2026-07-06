@@ -82,7 +82,8 @@ async function handleLogin() {
     store.username = res.username
     store.userRole = res.user_role
     ElMessage.success('登录成功')
-    router.push('/dashboard')
+    const isMobile = window.innerWidth < 768 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+    router.push(isMobile ? '/mobile' : '/dashboard')
   } catch {} finally { loading.value = false }
 }
 </script>
