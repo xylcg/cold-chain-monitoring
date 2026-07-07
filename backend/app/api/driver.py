@@ -10,9 +10,12 @@
 - 纸质温度记录拍照上传归档
 - 运单全生命周期管理
 """
+import os
 import json
+import base64
 import hashlib
 import uuid
+import random
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
@@ -20,7 +23,7 @@ from fastapi.responses import PlainTextResponse, JSONResponse
 from pydantic import BaseModel
 
 from ..core.security import get_current_user, require_role
-from ..services.world_state import get_world_state, _live_wave, _live_int_wave
+from ..services.world_state import get_world_state, _live_wave, _live_int_wave, CITY_COORDS
 from ..services.alert_engine import alert_engine
 from ..api.traceability import (
     TRACE_DATA, TRACE_RECORDS, TRACE_CODE_MAP, WAYBILL_TRACE_MAP,
@@ -76,9 +79,11 @@ def get_driver_vehicle(driver_id: str) -> Optional[dict]:
 def get_driver_orders(driver_id: str) -> List[dict]:
     """获取司机名下的订单"""
     orders = []
+    ws = get_world_state()
     for trace_code, data in TRACE_DATA.items():
         if data.get("driver_id") == driver_id or data.get("status") in ["in_transit", "delivered"]:
             record_ids = TRACE_CODE_MAP.get(trace_code, [])
+            wb_ws = ws.get("waybills", {}).get(data.get("waybill_id"), {})
             records = [r for r in TRACE_RECORDS if r["id"] in record_ids]
             records = sorted(records, key=lambda r: r.get("timestamp", ""))
             
@@ -116,6 +121,9 @@ def get_driver_orders(driver_id: str) -> List[dict]:
                 "created_at": data.get("created_at", ""),
                 "driver_id": data.get("driver_id", ""),
                 "device_id": data.get("device_id", ""),
+                "receiver": data.get("receiver", ""),
+                "receiver_contact": data.get("receiver_contact", ""),
+                "checkin_stations": wb_ws.get("checkin_stations", []),
             })
     
     orders.sort(key=lambda x: x.get("created_at", ""), reverse=True)
@@ -277,6 +285,10 @@ async def get_delivery_progress(
     route = vehicle_data.get("route", [])
     progress = 0
     current_segment = {}
+    route_coords = [
+        {"city": c, "lat": CITY_COORDS.get(c, (0, 0))[0], "lng": CITY_COORDS.get(c, (0, 0))[1]}
+        for c in route
+    ]
     
     if len(route) >= 2:
         progress = _live_int_wave(35, 20, 5) / 100
@@ -313,9 +325,12 @@ async def get_delivery_progress(
             "plate_number": vehicle_data["plate_number"],
             "current_city": vehicle_data.get("current_city", ""),
             "speed": round(_live_wave(vehicle_data.get("vehicle_speed", 60), 0.1), 1),
+            "latitude": vehicle_data.get("latitude", 0),
+            "longitude": vehicle_data.get("longitude", 0),
         },
         "route": {
             "full_route": route,
+            "route_coords": route_coords,
             "total_stations": len(route),
             "current_segment": current_segment,
             "progress_percent": round(progress * 100, 1),
@@ -328,6 +343,46 @@ async def get_delivery_progress(
         },
         "current_waybill": current_waybill,
         "waybills_count": len(waybills),
+        "checkin_stations": current_waybill.get("checkin_stations", []) if current_waybill else [],
+    }
+
+
+class StationCheckinReq(BaseModel):
+    waybill_id: str
+    station_name: str
+
+
+@router.post("/station-checkin")
+async def station_checkin(
+    payload: StationCheckinReq,
+    user: dict = Depends(require_role("driver", "admin")),
+):
+    """
+    站点到达打卡
+    记录司机到达某站点的时间，写入 world_state 运单的 checkin_stations
+    """
+    ws = get_world_state()
+    wb = ws.get("waybills", {}).get(payload.waybill_id)
+    if not wb:
+        raise HTTPException(status_code=404, detail="未找到该运单")
+
+    checkin = {
+        "station": payload.station_name,
+        "checkin_time": datetime.utcnow().isoformat(),
+        "operator": user.get("username", ""),
+    }
+    # 同一站点不重复打卡
+    if not any(c["station"] == payload.station_name for c in wb.get("checkin_stations", [])):
+        wb.setdefault("checkin_stations", []).append(checkin)
+
+    return {
+        "success": True,
+        "waybill_id": payload.waybill_id,
+        "station": payload.station_name,
+        "checkin_time": checkin["checkin_time"],
+        "checkin_stations": wb["checkin_stations"],
+        "total_stations": len(wb.get("route", [])),
+        "checked_count": len(wb["checkin_stations"]),
     }
 
 
@@ -655,6 +710,8 @@ async def get_waybill_detail(
         "violations_count": len(violations),
         "total_records": len(records),
         "stages": stage_info,
+        "receiver": data.get("receiver", ""),
+        "receiver_contact": data.get("receiver_contact", ""),
         "last_update": records[-1].get("timestamp", "") if records else datetime.utcnow().isoformat(),
     }
 
@@ -706,3 +763,135 @@ async def get_tracking(
         },
         "last_update": datetime.utcnow().isoformat(),
     }
+
+
+# ==================== 8. 温度记录纸 AI 识别（OCR + 视觉） ====================
+
+def _build_temperature_paper_prompt() -> str:
+    return """你是一个专业的冷链温度记录纸识别专家。请识别图片中的温度记录纸/温控台账。
+请从图片中提取每个时间点的温度记录，并按照以下JSON格式输出：
+{
+    "temperatures": [
+        {"time": "08:00", "temp": 4.2, "is_ok": true, "standard": "-18~6℃"},
+        {"time": "10:00", "temp": 5.1, "is_ok": true, "standard": "-18~6℃"}
+    ],
+    "summary": {"total": 5, "ok": 3, "fail": 2},
+    "overall_status": "fail",
+    "suggestion": "温度记录纸显示有2处温度超标，建议检查冷机设置并联系调度"
+}
+
+识别规则：
+1. temperatures 为从图片中识别出的各时间点温度记录，time 为时间(如 08:00)，temp 为温度数值(℃)，is_ok 表示该点是否在标准范围内，standard 为该记录对应的温度标准区间
+2. summary.total 为总记录数，ok 为合格点数，fail 为超标点数
+3. overall_status 为 overall 判定: 全部合格为 "pass"，存在超标为 "fail"
+4. suggestion 为基于识别结果的处置建议
+5. 若图片中无法清晰识别具体数值，请根据可见信息合理推断，并尽量输出 3-6 个时间点的记录
+6. 输出必须是合法的JSON格式，不要包含其他文字"""
+
+
+async def _call_dashscope_vision(image_base64: str, prompt: str) -> dict:
+    """调用 DashScope 视觉大模型（qwen-vl-plus）识别图片，复用 ZHIPU_API_KEY 环境变量。"""
+    import httpx
+    api_key = os.environ.get("ZHIPU_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="API密钥未配置")
+
+    image_data_url = f"data:image/jpeg;base64,{image_base64}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "qwen-vl-plus",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data_url}},
+                ],
+            }
+        ],
+        "max_tokens": 800,
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0)) as client:
+        response = await client.post(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+    if response.status_code != 200:
+        raise Exception(f"API调用失败，状态码: {response.status_code}")
+    result = response.json()
+    content = result["choices"][0]["message"]["content"]
+    content = content.replace("```json", "").replace("```", "").strip()
+    return json.loads(content)
+
+
+def _fallback_temperature_paper() -> dict:
+    """无视觉 API Key 时的规则降级：生成结构合理的模拟识别结果（明确标注为模拟）。"""
+    base_hour = 8
+    temps = []
+    ok = 0
+    fail = 0
+    for i in range(5):
+        hour = base_hour + i * 2
+        t = round(random.uniform(3.8, 7.9), 1)
+        is_ok = t <= 6.0
+        if is_ok:
+            ok += 1
+        else:
+            fail += 1
+        temps.append({
+            "time": f"{hour:02d}:00",
+            "temp": t,
+            "is_ok": is_ok,
+            "standard": "-18~6℃",
+        })
+    return {
+        "success": True,
+        "record_id": "TR-" + datetime.utcnow().strftime("%Y%m%d%H%M%S"),
+        "temperatures": temps,
+        "summary": {"total": len(temps), "ok": ok, "fail": fail},
+        "overall_status": "pass" if fail == 0 else "fail",
+        "suggestion": (
+            "温度记录纸识别完成，全程温度达标。"
+            if fail == 0
+            else f"温度记录纸显示有{fail}处温度超标，建议检查冷机设置并联系调度"
+        ),
+        "is_simulated": True,
+    }
+
+
+@router.post("/recognize-temperature-paper")
+async def recognize_temperature_paper(
+    file: UploadFile = File(...),
+    user: dict = Depends(require_role("driver", "admin")),
+):
+    """
+    温度记录纸 AI 识别（OCR + 视觉大模型）
+    - 配置了 ZHIPU_API_KEY 时调用 DashScope qwen-vl-plus 真实识别图片内容
+    - 未配置时降级为规则模拟，保证移动端演示闭环（结果标注 is_simulated=true）
+    """
+    content = await file.read()
+    try:
+        image_base64 = base64.b64encode(content).decode("utf-8")
+        vision_result = await _call_dashscope_vision(image_base64, _build_temperature_paper_prompt())
+        # 统一字段结构
+        temps = vision_result.get("temperatures", [])
+        ok = sum(1 for t in temps if t.get("is_ok"))
+        fail = len(temps) - ok
+        return {
+            "success": True,
+            "record_id": "TR-" + datetime.utcnow().strftime("%Y%m%d%H%M%S"),
+            "temperatures": temps,
+            "summary": vision_result.get("summary", {"total": len(temps), "ok": ok, "fail": fail}),
+            "overall_status": vision_result.get("overall_status", "pass" if fail == 0 else "fail"),
+            "suggestion": vision_result.get("suggestion", ""),
+            "is_simulated": False,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        # 视觉识别失败（无 Key / 网络 / 解析异常）→ 规则降级
+        return _fallback_temperature_paper()

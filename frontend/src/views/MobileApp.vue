@@ -3,8 +3,10 @@
     <div class="mobile-wrap">
       <!-- 页面头部 -->
       <div class="mb-header">
-        <div class="mb-header-title">{{ headerTitle }}</div>
-        <div class="mb-header-sub">{{ headerSub }}</div>
+        <div class="mb-header-left">
+          <div class="mb-header-title">{{ headerTitle }}</div>
+          <div class="mb-header-sub">{{ headerSub }}</div>
+        </div>
       </div>
 
       <!-- ===== 实时监控 Tab ===== -->
@@ -168,14 +170,31 @@
                 <span class="rp-text">已完成 {{ progressData.route.progress_percent }}%</span>
               </div>
               <div class="route-segments">
-                <div v-for="(city, idx) in progressData.route.full_route" :key="idx" class="route-segment" :class="{ current: idx === getCurrentSegmentIdx() }">
+                <div v-for="(city, idx) in progressData.route.full_route" :key="idx" class="route-segment" :class="{ current: idx === getCurrentSegmentIdx(), checked: isStationChecked(city) }">
                   <span class="rs-num">{{ idx + 1 }}</span>
                   <span class="rs-city">{{ city }}</span>
+                  <button
+                    class="rs-checkin"
+                    :class="{ done: isStationChecked(city) }"
+                    :disabled="!progressData.current_waybill || isStationChecked(city)"
+                    @click="checkinStation(city)"
+                  >{{ isStationChecked(city) ? '✓ 已打卡' : '打卡' }}</button>
                   <span v-if="idx < progressData.route.full_route.length - 1" class="rs-arrow">→</span>
                 </div>
               </div>
             </div>
             <div v-else class="route-empty">暂无规划路线</div>
+          </div>
+
+          <div class="mb-card map-card">
+            <div class="mbc-header">
+              <span class="mbc-icon">🗺️</span>
+              <span class="mbc-title">车辆实时位置</span>
+            </div>
+            <div class="map-wrap">
+              <canvas ref="mapCanvas" class="map-canvas"></canvas>
+              <div v-if="!progressData.route.route_coords || progressData.route.route_coords.length === 0" class="map-empty">暂无位置数据</div>
+            </div>
           </div>
 
           <div class="mb-card timing-card">
@@ -487,6 +506,14 @@
               <strong>{{ waybillDetail.origin }} → {{ waybillDetail.destination }}</strong>
             </div>
             <div class="mbd-row">
+              <span>收货人</span>
+              <strong>{{ waybillDetail.receiver || '—' }}</strong>
+            </div>
+            <div class="mbd-row">
+              <span>联系电话</span>
+              <strong>{{ waybillDetail.receiver_contact || '—' }}</strong>
+            </div>
+            <div class="mbd-row">
               <span>数量</span>
               <strong>{{ waybillDetail.quantity }}{{ waybillDetail.unit }}</strong>
             </div>
@@ -526,6 +553,13 @@
                 </div>
               </div>
             </div>
+            <div class="mbd-section" v-if="waybillDetail.stages && waybillDetail.stages.some(s => s.completed)">
+              <div class="mbds-title">🌡 温度曲线</div>
+              <div class="mbds-curve">
+                <canvas ref="wbCurveCanvas" class="wb-curve-canvas"></canvas>
+                <div v-if="wbCurveLoading" class="wb-curve-loading">加载温度曲线中…</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -558,6 +592,34 @@
         </div>
       </div>
 
+      <!-- ===== 我的 Tab ===== -->
+      <div class="mb-page" v-show="activeTab === 'mine'">
+        <div class="mine-section">
+          <!-- 用户信息卡片 -->
+          <div class="mine-user-card">
+            <div class="muc-avatar">👤</div>
+            <div class="muc-info">
+              <div class="muc-name">{{ appStore.username || '司机用户' }}</div>
+              <div class="muc-role">{{ roleLabel }}</div>
+            </div>
+          </div>
+
+          <!-- 功能列表 -->
+          <div class="mine-menu">
+            <div class="mine-menu-item" @click="handleLogout">
+              <span class="mmi-icon">🚪</span>
+              <span class="mmi-text">退出登录</span>
+              <span class="mmi-arrow">›</span>
+            </div>
+          </div>
+
+          <!-- 版本信息 -->
+          <div class="mine-footer">
+            <span>冷链监控司机端 v1.0.0</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 底部导航 -->
       <div class="mb-tabbar">
         <div class="mt-item" :class="{ active: activeTab === 'monitor' }" @click="activeTab = 'monitor'; loadDashboard()">
@@ -581,6 +643,10 @@
           <span class="mt-icon">📋</span>
           <span class="mt-label">运单</span>
         </div>
+        <div class="mt-item" :class="{ active: activeTab === 'mine' }" @click="activeTab = 'mine'">
+          <span class="mt-icon">👤</span>
+          <span class="mt-label">我的</span>
+        </div>
       </div>
     </div>
   </div>
@@ -588,9 +654,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { driverAPI } from '@/api'
+import { driverAPI, customerAPI } from '@/api'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
+
+import { useAppStore } from '@/stores/app'
+import { useRouter } from 'vue-router'
+
+const appStore = useAppStore()
+const router = useRouter()
 
 const activeTab = ref('monitor')
 const alertFilter = ref('all')
@@ -602,6 +674,7 @@ const alertsData = ref<any>({ success: false, alerts: [], alert_count: 0 })
 const uploadHistory = ref<any>({ count: 0, records: [] })
 const waybillsData = ref<any>({ count: 0, waybills: [] })
 const waybillDetail = ref<any>(null)
+const mapCanvas = ref<HTMLCanvasElement | null>(null)
 
 // 摄像头相关
 const cameraMode = ref<'normal' | 'temperature'>('normal')
@@ -625,6 +698,10 @@ let uploadPhotoFile: File | null = null
 const handlingAlert = ref<any>(null)
 const handleNotes = ref('')
 
+// 运单详情温度曲线
+const wbCurveCanvas = ref<HTMLCanvasElement | null>(null)
+const wbCurveLoading = ref(false)
+
 const handleActions = [
   { value: 'check', label: '检查设备' },
   { value: 'adjust_temp', label: '调整温度' },
@@ -640,6 +717,7 @@ const headerTitle = computed(() => {
     alerts: '异常预警',
     upload: '凭证上传',
     waybills: '运单管理',
+    mine: '我的',
   }
   return titles[activeTab.value] || '冷链监控'
 })
@@ -651,9 +729,25 @@ const headerSub = computed(() => {
     alerts: '实时预警 · 处置指引 · 闭环',
     upload: '拍照留存 · 凭证归档 · 溯源',
     waybills: '订单管理 · 状态追踪 · 详情',
+    mine: '个人中心 · 账号设置 · 退出',
   }
   return subs[activeTab.value] || '配送人员端'
 })
+
+const roleLabel = computed(() => {
+  const map: Record<string, string> = {
+    driver: '配送司机',
+    admin: '管理员',
+    warehouse: '仓库人员',
+    customer: '客户',
+  }
+  return map[appStore.userRole] || appStore.userRole || '司机'
+})
+
+function handleLogout() {
+  appStore.logout()
+  router.push('/login')
+}
 
 const tempProgress = computed(() => {
   const target = dashboardData.value.temperature?.target || 0
@@ -709,6 +803,30 @@ function getCurrentSegmentIdx() {
   return Math.floor((progressData.value.route?.progress_percent || 0) / (100 / (progressData.value.route?.total_stations || 1)))
 }
 
+function isStationChecked(city: string) {
+  const checked = progressData.value.checkin_stations || []
+  return checked.some((c: any) => c.station === city)
+}
+
+async function checkinStation(city: string) {
+  if (!progressData.value.current_waybill) {
+    ElMessage.warning('暂无当前运单，无法打卡')
+    return
+  }
+  const wbId = progressData.value.current_waybill.waybill_id
+  try {
+    const res: any = await driverAPI.stationCheckin(wbId, city)
+    if (res.success) {
+      progressData.value.checkin_stations = res.checkin_stations
+      ElMessage.success(`已在「${city}」打卡`)
+    } else {
+      ElMessage.error(res.error || '打卡失败')
+    }
+  } catch {
+    ElMessage.error('打卡失败，请重试')
+  }
+}
+
 async function loadDashboard() {
   try {
     const res: any = await driverAPI.getDashboard()
@@ -722,9 +840,93 @@ async function loadProgress() {
   try {
     const res: any = await driverAPI.getDeliveryProgress()
     progressData.value = res
+    if (res.success) {
+      await nextTick()
+      drawMap()
+    }
   } catch {
     progressData.value = { success: false, error: '加载失败' }
   }
+}
+
+// 用 Canvas 绘制简化地图：路线城市连线 + 车辆当前位置
+function drawMap() {
+  const canvas = mapCanvas.value
+  if (!canvas) return
+  const coords = progressData.value?.route?.route_coords
+  const veh = progressData.value?.vehicle
+  if (!coords || coords.length === 0 || !veh) return
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const dpr = window.devicePixelRatio || 1
+  const W = canvas.clientWidth || 320
+  const H = 200
+  canvas.width = W * dpr
+  canvas.height = H * dpr
+  ctx.scale(dpr, dpr)
+  ctx.clearRect(0, 0, W, H)
+
+  // 背景
+  ctx.fillStyle = '#0f1b2d'
+  ctx.fillRect(0, 0, W, H)
+
+  // 经纬度范围
+  const lats = coords.map((c: any) => c.lat)
+  const lngs = coords.map((c: any) => c.lng)
+  const minLat = Math.min(...lats, veh.latitude) - 2
+  const maxLat = Math.max(...lats, veh.latitude) + 2
+  const minLng = Math.min(...lngs, veh.longitude) - 2
+  const maxLng = Math.max(...lngs, veh.longitude) + 2
+
+  const pad = 24
+  const toX = (lng: number) => pad + ((lng - minLng) / (maxLng - minLng || 1)) * (W - pad * 2)
+  const toY = (lat: number) => H - pad - ((lat - minLat) / (maxLat - minLat || 1)) * (H - pad * 2)
+
+  // 路线连线
+  ctx.strokeStyle = '#3b82f6'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  coords.forEach((c: any, i: number) => {
+    const x = toX(c.lng)
+    const y = toY(c.lat)
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+
+  // 城市点
+  coords.forEach((c: any, i: number) => {
+    const x = toX(c.lng)
+    const y = toY(c.lat)
+    const checked = isStationChecked(c.city)
+    ctx.fillStyle = checked ? '#22c55e' : (i === getCurrentSegmentIdx() ? '#f59e0b' : '#94a3b8')
+    ctx.beginPath()
+    ctx.arc(x, y, 5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#cbd5e1'
+    ctx.font = '11px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(c.city, x, y - 9)
+  })
+
+  // 车辆位置
+  const vx = toX(veh.longitude)
+  const vy = toY(veh.latitude)
+  ctx.fillStyle = '#ef4444'
+  ctx.beginPath()
+  ctx.arc(vx, vy, 7, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = '#fca5a5'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.arc(vx, vy, 11, 0, Math.PI * 2)
+  ctx.stroke()
+  ctx.fillStyle = '#fff'
+  ctx.font = 'bold 10px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.fillText('🚛', vx, vy + 3)
 }
 
 async function loadAlerts() {
@@ -759,9 +961,105 @@ async function viewWaybillDetail(wb: any) {
   try {
     const res: any = await driverAPI.getWaybillDetail(wb.waybill_id)
     waybillDetail.value = res
+    // 加载温度曲线数据（复用 customer 温度曲线接口，按运单号查询）
+    loadWaybillCurve(wb.waybill_id)
   } catch {
     ElMessage.error('加载运单详情失败')
   }
+}
+
+// 运单温度曲线：调用后端 /customer/query/temperature-curve，用 canvas 绘制
+async function loadWaybillCurve(waybillId: string) {
+  wbCurveLoading.value = true
+  try {
+    const res: any = await customerAPI.getTemperatureCurve(waybillId)
+    const points = res.points || []
+    await nextTick()
+    drawWaybillCurve(points, res.threshold)
+  } catch {
+    // 曲线加载失败不影响详情展示
+  } finally {
+    wbCurveLoading.value = false
+  }
+}
+
+function drawWaybillCurve(points: any[], threshold?: any) {
+  const canvas = wbCurveCanvas.value
+  if (!canvas) return
+  const dpr = window.devicePixelRatio || 1
+  const cssW = canvas.clientWidth || 320
+  const cssH = 160
+  canvas.width = cssW * dpr
+  canvas.height = cssH * dpr
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.scale(dpr, dpr)
+  ctx.clearRect(0, 0, cssW, cssH)
+
+  if (!points.length) {
+    ctx.fillStyle = '#999'
+    ctx.font = '13px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('暂无温度曲线数据', cssW / 2, cssH / 2)
+    return
+  }
+
+  const padL = 34, padR = 10, padT = 14, padB = 22
+  const plotW = cssW - padL - padR
+  const plotH = cssH - padT - padB
+  const temps = points.map((p: any) => p.temperature)
+  let minT = Math.min(...temps)
+  let maxT = Math.max(...temps)
+  if (threshold && threshold.min !== undefined) minT = Math.min(minT, threshold.min)
+  if (threshold && threshold.max !== undefined) maxT = Math.max(maxT, threshold.max)
+  if (minT === maxT) { minT -= 1; maxT += 1 }
+  const range = maxT - minT
+
+  const xAt = (i: number) => padL + (points.length === 1 ? plotW / 2 : (i / (points.length - 1)) * plotW)
+  const yAt = (t: number) => padT + plotH - ((t - minT) / range) * plotH
+
+  // 阈值带
+  if (threshold && threshold.min !== undefined && threshold.max !== undefined) {
+    const yMax = yAt(threshold.max)
+    const yMin = yAt(threshold.min)
+    ctx.fillStyle = 'rgba(34,197,94,0.10)'
+    ctx.fillRect(padL, yMax, plotW, yMin - yMax)
+    ctx.strokeStyle = 'rgba(34,197,94,0.5)'
+    ctx.setLineDash([4, 3])
+    ctx.beginPath(); ctx.moveTo(padL, yMax); ctx.lineTo(padL + plotW, yMax); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(padL, yMin); ctx.lineTo(padL + plotW, yMin); ctx.stroke()
+    ctx.setLineDash([])
+  }
+
+  // 折线
+  ctx.strokeStyle = '#00a8ff'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  points.forEach((p: any, i: number) => {
+    const x = xAt(i), y = yAt(p.temperature)
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+
+  // 点 + 超标点标红
+  points.forEach((p: any, i: number) => {
+    const x = xAt(i), y = yAt(p.temperature)
+    const exceed = threshold && (p.temperature < threshold.min || p.temperature > threshold.max)
+    ctx.fillStyle = exceed ? '#ef4444' : '#00a8ff'
+    ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill()
+  })
+
+  // Y 轴刻度
+  ctx.fillStyle = '#888'
+  ctx.font = '10px sans-serif'
+  ctx.textAlign = 'right'
+  ctx.fillText(maxT.toFixed(1) + '℃', padL - 4, padT + 4)
+  ctx.fillText(minT.toFixed(1) + '℃', padL - 4, padT + plotH)
+  // X 轴首尾时间
+  ctx.textAlign = 'left'
+  ctx.fillText(String(points[0].time || ''), padL, cssH - 6)
+  ctx.textAlign = 'right'
+  ctx.fillText(String(points[points.length - 1].time || ''), padL + plotW, cssH - 6)
 }
 
 // ===== 摄像头功能 =====
@@ -821,28 +1119,30 @@ function retakePhoto() {
   openCamera()
 }
 
-// ===== AI识别温度记录纸（前端Mock，后端接口就绪后替换） =====
+// ===== AI识别温度记录纸（调用后端 OCR + 视觉大模型接口） =====
 async function recognizeTemperaturePaper() {
   if (!capturedPhotoDataUrl.value) return
   recognizing.value = true
-  // 模拟AI识别延时
-  setTimeout(() => {
+  try {
+    // 将 dataURL 转回 File 对象传给后端
+    const blob = await (await fetch(capturedPhotoDataUrl.value)).blob()
+    const file = new File([blob], 'temp_paper_' + Date.now() + '.jpg', { type: 'image/jpeg' })
+    const res: any = await driverAPI.recognizeTemperaturePaper(file)
     recognitionResult.value = {
       success: true,
-      record_id: 'TR-' + Date.now(),
-      temperatures: [
-        { time: '08:00', temp: 4.2, is_ok: true, standard: '-18~6℃' },
-        { time: '10:00', temp: 5.1, is_ok: true, standard: '-18~6℃' },
-        { time: '12:00', temp: 7.8, is_ok: false, standard: '-18~6℃' },
-        { time: '14:00', temp: 4.9, is_ok: true, standard: '-18~6℃' },
-        { time: '16:00', temp: 6.2, is_ok: false, standard: '-18~6℃' },
-      ],
-      summary: { total: 5, ok: 3, fail: 2 },
-      overall_status: 'fail',
-      suggestion: '温度记录纸显示有2处温度超标，建议检查冷机设置并联系调度',
+      record_id: res.record_id || ('TR-' + Date.now()),
+      temperatures: res.temperatures || [],
+      summary: res.summary || { total: 0, ok: 0, fail: 0 },
+      overall_status: res.overall_status || 'pass',
+      suggestion: res.suggestion || '',
+      is_simulated: !!res.is_simulated,
     }
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail || '识别失败，请重试'
+    ElMessage.error(detail)
+  } finally {
     recognizing.value = false
-  }, 1500)
+  }
 }
 
 // ===== 上传 =====
@@ -1016,16 +1316,11 @@ onUnmounted(() => {
   background: linear-gradient(135deg, #00a8ff, #7c3aed);
   padding: 24px 16px 20px;
   color: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
-.mb-header-title {
-  font-size: 20px;
-  font-weight: 800;
-}
-.mb-header-sub {
-  font-size: 12px;
-  opacity: 0.8;
-  margin-top: 4px;
-}
+.mb-header-left { flex: 1; }
 
 .mb-page {
   padding: 12px;
@@ -1400,6 +1695,50 @@ onUnmounted(() => {
   color: #999;
   text-align: center;
   padding: 10px;
+}
+
+.rs-checkin {
+  margin-left: 6px;
+  border: 1px solid #3b82f6;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.rs-checkin.done {
+  border-color: #22c55e;
+  background: #f0fdf4;
+  color: #16a34a;
+  cursor: default;
+}
+.rs-checkin:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.map-card {
+  background: #fff;
+}
+.map-wrap {
+  position: relative;
+  width: 100%;
+}
+.map-canvas {
+  width: 100%;
+  height: 200px;
+  display: block;
+  border-radius: 8px;
+}
+.map-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  font-size: 12px;
 }
 
 .timing-card {
@@ -1998,6 +2337,30 @@ onUnmounted(() => {
   font-size: 10px;
   color: #999;
 }
+.mbds-curve {
+  position: relative;
+  width: 100%;
+  background: #fafcff;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  padding: 6px;
+  box-sizing: border-box;
+}
+.wb-curve-canvas {
+  width: 100%;
+  height: 160px;
+  display: block;
+}
+.wb-curve-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #999;
+}
+
 
 .mb-file-input {
   display: none;
@@ -2440,5 +2803,56 @@ onUnmounted(() => {
   font-size: 11px;
   color: #999;
   margin-top: 2px;
+}
+
+/* ===== 我的页面 ===== */
+.mine-section { padding: 16px; }
+.mine-user-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 20px;
+  background: linear-gradient(135deg, #00a8ff, #7c3aed);
+  border-radius: 16px;
+  color: #fff;
+  margin-bottom: 20px;
+}
+.muc-avatar {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px;
+}
+.muc-info { flex: 1; }
+.muc-name { font-size: 18px; font-weight: 700; }
+.muc-role { font-size: 12px; opacity: 0.8; margin-top: 4px; }
+
+.mine-menu {
+  background: #fff;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+}
+.mine-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid #f5f5f5;
+}
+.mine-menu-item:last-child { border-bottom: none; }
+.mine-menu-item:active { background: #f8f9fa; }
+.mmi-icon { font-size: 20px; }
+.mmi-text { flex: 1; font-size: 15px; font-weight: 500; color: #333; }
+.mmi-arrow { font-size: 18px; color: #ccc; }
+
+.mine-footer {
+  text-align: center;
+  margin-top: 28px;
+  font-size: 11px;
+  color: #bbb;
 }
 </style>

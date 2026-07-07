@@ -1,46 +1,70 @@
-<template>
+﻿<template>
   <div class="quality-page">
     <div class="page-header">
-      <h2 class="page-title">生鲜品质AI评估</h2>
-      <span class="subtitle">📸 上传图片 · AI自动识别品类与品质</span>
+      <div class="ph-left">
+        <h2 class="page-title">生鲜品质AI评估</h2>
+        <span class="subtitle">📸 上传图片 · AI自动识别品类与品质</span>
+      </div>
+      <div class="ph-right">
+        <div class="ph-stat">
+          <span class="phs-icon">🤖</span>
+          <span class="phs-text">AI引擎就绪</span>
+          <span class="phs-dot"></span>
+        </div>
+      </div>
     </div>
 
     <!-- 场景切换：入库质检 / 出库复核 -->
     <div class="scene-switch">
       <div class="scene-item" :class="{ active: sceneMode === 'inbound' }" @click="switchScene('inbound')">
-        <span class="scene-icon">📥</span>
-        <span class="scene-label">入库质检</span>
-        <span class="scene-desc">货物到达冷库前拍照，AI判断是否允许入库</span>
+        <div class="scene-icon-wrap" :class="{ active: sceneMode === 'inbound' }">
+          <span class="scene-icon">📥</span>
+        </div>
+        <div class="scene-content">
+          <span class="scene-label">入库质检</span>
+          <span class="scene-desc">货物到达冷库前拍照，AI判断是否允许入库</span>
+        </div>
+        <div class="scene-check" v-if="sceneMode === 'inbound'">✓</div>
       </div>
       <div class="scene-item" :class="{ active: sceneMode === 'outbound' }" @click="switchScene('outbound')">
-        <span class="scene-icon">📤</span>
-        <span class="scene-label">出库复核</span>
-        <span class="scene-desc">发货前拍照复核，AI判断是否符合出库标准</span>
+        <div class="scene-icon-wrap" :class="{ active: sceneMode === 'outbound' }">
+          <span class="scene-icon">📤</span>
+        </div>
+        <div class="scene-content">
+          <span class="scene-label">出库复核</span>
+          <span class="scene-desc">发货前拍照复核，AI判断是否符合出库标准</span>
+        </div>
+        <div class="scene-check" v-if="sceneMode === 'outbound'">✓</div>
       </div>
     </div>
 
     <!-- AI视觉识别主区域 -->
     <div class="glass-card main-card">
       <div class="card-header">
-        <span class="header-icon">🤖</span>
-        <span class="header-title">AI图片识别</span>
-        <span class="header-tip">{{ sceneMode === 'inbound' ? '入库质检模式：拍照识别生鲜状态，决定是否入库' : '出库复核模式：拍照复核生鲜品质，决定是否放行' }}</span>
+        <div class="ch-left">
+          <span class="header-icon">🤖</span>
+          <span class="header-title">AI图片识别</span>
+        </div>
+        <span class="header-tip">
+          <span class="ht-dot"></span>
+          {{ sceneMode === 'inbound' ? '入库质检模式' : '出库复核模式' }}
+        </span>
       </div>
       
       <!-- 步骤指示器 -->
       <div class="step-indicator">
         <div class="step" :class="{active: true, done: uploadedImage}">
-          <span class="step-num">1</span>
-          <span class="step-text">{{ cameraActive ? '拍照中' : '上传图片' }}</span>
+          <div class="step-circle"><span class="step-num">{{ cameraActive ? '📷' : (uploadedImage ? '✓' : '1') }}</span></div>
+          <span class="step-text">{{ cameraActive ? '拍照中' : (uploadedImage ? '已上传' : '上传图片') }}</span>
         </div>
-        <div class="step-line" :class="{active: uploadedImage || assessing}"></div>
+        <div class="step-line" :class="{active: uploadedImage || assessing}"><div class="sl-fill"></div></div>
         <div class="step" :class="{active: assessing, done: assessResult}">
-          <span class="step-num">2</span>
+          <div class="step-circle"><span class="step-num">{{ assessResult ? '✓' : '2' }}</span></div>
           <span class="step-text">AI分析</span>
         </div>
-        <div class="step-line" :class="{active: assessResult}"></div>
+        <div class="step-line" :class="{active: assessResult}"><div class="sl-fill"></div></div>
         <div class="step" :class="{active: assessResult}">
-          <span class="step-num">3</span>
+          <div class="step-circle"><span class="step-num">3</span></div>
           <span class="step-text">查看结果</span>
         </div>
       </div>
@@ -86,12 +110,19 @@
         <!-- 上传占位 -->
         <div v-else class="upload-placeholder">
           <div class="upload-main">
-            <div class="camera-big-btn" @click.stop="openCamera">
-              <span class="cbb-icon">📷</span>
-              <span class="cbb-text">调用摄像头拍照</span>
-              <span class="cbb-sub">移动端推荐 · 直接拍摄生鲜实物</span>
+            <div class="camera-big-btn" @click.stop="openCamera"
+              style="display:flex; flex-direction:column; align-items:center; gap:6px; width:100%; max-width:360px; padding:22px 20px; border:2px solid #00a8ff; border-radius:14px; background:linear-gradient(135deg,#e8f4fd,#f0f9ff); cursor:pointer; transition:all 0.2s; box-sizing:border-box;">
+              <span class="cbb-icon" style="font-size:32px;">📷</span>
+              <span class="cbb-text" style="font-size:16px; font-weight:700; color:#0369a1;">调用摄像头拍照</span>
+              <span class="cbb-sub" style="font-size:11px; color:#6b9cc2;">移动端推荐 · 直接拍摄生鲜实物</span>
             </div>
-            <div class="upload-divider"><span>或从本地上传</span></div>
+            <div class="upload-divider"
+              style="position:relative; text-align:center; width:100%; max-width:400px; margin:8px 0;">
+              <span style="font-size:12px; color:var(--text-muted); background:#fff; padding:0 12px; position:relative; z-index:1;">或从本地上传</span>
+              <!-- 左右装饰线用伪元素不可靠，直接用内联元素实现 -->
+              <div style="position:absolute; top:50%; left:0; width:calc(50% - 50px); height:1px; background:var(--border);"></div>
+              <div style="position:absolute; top:50%; right:0; width:calc(50% - 50px); height:1px; background:var(--border);"></div>
+            </div>
             <div class="upload-icon-wrap">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.3">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -116,9 +147,6 @@
                 <span>🥚 蛋类</span>
                 <span>💉 医药制品</span>
                 <span>🌼 花卉</span>
-                <span>❄ 冷冻食品</span>
-                <span>🍱 熟食预制菜</span>
-                <span>🥤 饮料</span>
               </div>
             </div>
             <div class="feature-row">
@@ -137,17 +165,35 @@
       <!-- 放行决策卡片（最醒目） -->
       <div v-if="assessResult" class="decision-card" :class="'decision-' + getDecision(assessResult)">
         <div class="dc-top">
-          <div class="dc-scene-tag">{{ sceneMode === 'inbound' ? '📥 入库决策' : '📤 出库决策' }}</div>
-          <div class="dc-result-badge">{{ getDecisionText(getDecision(assessResult)) }}</div>
+          <div class="dc-top-left">
+            <span class="dc-scene-tag">{{ sceneMode === 'inbound' ? '📥 入库决策' : '📤 出库决策' }}</span>
+          </div>
+          <div class="dc-result-badge" :class="'badge-' + getDecision(assessResult)">
+            <span class="drb-icon">{{ getDecisionIcon(getDecision(assessResult)) }}</span>
+            <span class="drb-text">{{ getDecisionText(getDecision(assessResult)) }}</span>
+          </div>
         </div>
         <div class="dc-body">
+          <!-- 品质等级大展示 -->
+          <div class="dc-grade-showcase">
+            <div class="dgs-grade" :style="{ background: getGradeColor(assessResult.grade) }">
+              <span class="dgs-letter">{{ assessResult.grade }}</span>
+              <span class="dgs-label">级品质</span>
+            </div>
+            <div class="dgs-score-wrap">
+              <div class="dgs-score-num">{{ assessResult.quality_score || 0 }}<small>分</small></div>
+              <div class="dgs-score-bar">
+                <div class="dsb-track"><div class="dsb-fill" :style="{ width: (assessResult.quality_score||0) + '%', background: getScoreBarColor(assessResult.quality_score||0) }"></div></div>
+                <div class="dsb-labels"><span>差</span><span>优</span></div>
+              </div>
+            </div>
+          </div>
           <div class="dc-grid">
-            <div class="dc-field"><span class="dcf-label">操作类型</span><span class="dcf-value">{{ sceneMode === 'inbound' ? '入库质检' : '出库复核' }}</span></div>
-            <div class="dc-field"><span class="dcf-label">识别品类</span><span class="dcf-value">{{ assessResult.product_type || '未知' }}</span></div>
-            <div class="dc-field"><span class="dcf-label">品质等级</span><span class="dcf-value grade-val" :style="{color:getGradeTextColor(assessResult.grade)}">{{ assessResult.grade }}级 ({{ assessResult.quality_score }}分)</span></div>
-            <div class="dc-field"><span class="dcf-label">置信度</span><span class="dcf-value">{{ ((assessResult.confidence||0)*100).toFixed(1) }}%</span></div>
-            <div class="dc-field"><span class="dcf-label">剩余保鲜期</span><span class="dcf-value">{{ assessResult.remaining_freshness_days || '?' }}天</span></div>
-            <div class="dc-field"><span class="dcf-label">检测时间</span><span class="dcf-value">{{ new Date().toLocaleString() }}</span></div>
+            <div class="dc-field"><span class="dcf-icon">📋</span><span class="dcf-label">操作类型</span><span class="dcf-value">{{ sceneMode === 'inbound' ? '入库质检' : '出库复核' }}</span></div>
+            <div class="dc-field"><span class="dcf-icon">🏷</span><span class="dcf-label">识别品类</span><span class="dcf-value">{{ assessResult.product_type || '未知' }}</span></div>
+            <div class="dc-field"><span class="dcf-icon">🎯</span><span class="dcf-label">置信度</span><span class="dcf-value highlight">{{ ((assessResult.confidence||0)*100).toFixed(1) }}%</span></div>
+            <div class="dc-field"><span class="dcf-icon">⏱</span><span class="dcf-label">剩余保鲜期</span><span class="dcf-value" :class="{ warn: (assessResult.remaining_freshness_days||0) < 3 }">{{ assessResult.remaining_freshness_days || '?' }}天</span></div>
+            <div class="dc-field"><span class="dcf-icon">📅</span><span class="dcf-label">检测时间</span><span class="dcf-value">{{ new Date().toLocaleString() }}</span></div>
           </div>
           <div v-if="assessResult.defect_detected && assessResult.defects?.length" class="dc-defects">
             <strong>⚠ 检测到缺陷：</strong>
@@ -279,6 +325,8 @@ const demoImages = [
 
 function switchScene(mode: 'inbound' | 'outbound') {
   sceneMode.value = mode
+  // 切换场景时清除之前的上传图片和评估结果
+  clearUpload()
 }
 
 // ===== 摄像头功能 =====
@@ -338,12 +386,29 @@ function getDecision(result: any): string {
 
 function getDecisionText(decision: string): string {
   const map: Record<string, string> = {
-    pass: '✅ 准予放行',
-    warn: '⚠️ 有条件放行',
-    caution: '🔶 建议降级',
-    reject: '❌ 拒绝放行',
+    pass: '准予放行',
+    warn: '有条件放行',
+    caution: '建议降级',
+    reject: '拒绝放行',
   }
   return map[decision] || ''
+}
+
+function getDecisionIcon(decision: string): string {
+  const map: Record<string, string> = {
+    pass: '✅',
+    warn: '⚠️',
+    caution: '🔶',
+    reject: '❌',
+  }
+  return map[decision] || '❓'
+}
+
+function getScoreBarColor(score: number): string {
+  if (score >= 78) return 'linear-gradient(90deg, #22c55e, #16a34a)'
+  if (score >= 60) return 'linear-gradient(90deg, #f59e0b, #d97706)'
+  if (score >= 40) return 'linear-gradient(90deg, #f97316, #ea580c)'
+  return 'linear-gradient(90deg, #ef4444, #dc2626)'
 }
 
 function getGradeTextColor(grade: string): string {
@@ -483,208 +548,73 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ===== 页面基础 ===== */
 .quality-page { animation: fadeInUp 0.45s ease-out; }
-.page-header { margin-bottom: 20px; }
-.subtitle { font-size:13px; color:var(--text-muted); margin-left:12px; }
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 
-.main-card { margin-bottom:20px; }
-.card-header { font-size:14px; font-weight:600; color:var(--text-title); margin-bottom:16px; display:flex; align-items:center; gap:8px; }
-.header-icon { font-size:18px; }
-.header-title { flex:1; }
-.header-tip { font-size:12px; color:var(--text-muted); font-weight:400; }
-.step-indicator { display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:24px; padding:16px; background:rgba(0,0,0,0.02); border-radius:12px; }
-.step { display:flex; flex-direction:column; align-items:center; gap:4px; }
-.step-num { width:32px; height:32px; border-radius:50%; background:var(--border); color:var(--text-muted); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:600; transition:all 0.3s; }
-.step-text { font-size:11px; color:var(--text-muted); }
-.step.active .step-num { background:linear-gradient(135deg,var(--accent),var(--aurora)); color:#fff; }
-.step.active .step-text { color:var(--text-primary); font-weight:500; }
-.step.done .step-num { background:var(--teal); color:#fff; }
-.step-line { width:40px; height:2px; background:var(--border); transition:all 0.3s; }
-.step-line.active { background:var(--teal); }
-
-.upload-area { width:100%; height:380px; border:2px dashed var(--border); border-radius:16px; cursor:pointer; position:relative; overflow:hidden; transition:all 0.3s; background:rgba(0,0,0,0.01); }
-.upload-area:hover { border-color:var(--accent); background:rgba(0,168,255,0.02); }
-
-.hidden-input { position:absolute; width:0; height:0; opacity:0; }
-
-.upload-placeholder { width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; box-sizing:border-box; }
-
-.upload-main { display:flex; flex-direction:column; align-items:center; justify-content:center; flex:1; }
-.upload-main h3 { font-size:18px; font-weight:500; color:var(--text-primary); margin:16px 0 8px 0; }
-.upload-main p { font-size:13px; color:var(--text-muted); margin:0; }
-.upload-icon-wrap { padding:24px; }
-
-.upload-features { width:100%; max-width:500px; padding-top:16px; border-top:1px dashed var(--border); }
-.feature-row { margin-bottom:12px; }
-.feature-row:last-child { margin-bottom:0; }
-.feature-title { font-size:12px; color:var(--text-muted); font-weight:500; margin-bottom:8px; }
-
-.format-tags { display:flex; flex-wrap:wrap; gap:8px; }
-.format-tags span { font-size:12px; padding:5px 12px; background:rgba(0,0,0,0.04); border-radius:20px; border:1px solid rgba(0,0,0,0.06); transition:all 0.2s; }
-.format-tags span:hover { background:rgba(0,168,255,0.08); border-color:var(--accent); }
-
-.demo-images { display:flex; gap:14px; }
-.demo-img { cursor:pointer; text-align:center; }
-.demo-icon { width:64px; height:64px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:32px; border:2px solid transparent; transition:all 0.2s; box-shadow:0 2px 8px rgba(0,0,0,0.06); background:var(--bg-card); }
-.demo-img:hover .demo-icon { border-color:var(--accent); transform:scale(1.08); box-shadow:0 4px 12px rgba(0,168,255,0.15); }
-.demo-img span { display:block; font-size:11px; color:var(--text-muted); margin-top:6px; }
-
-.upload-preview { width:100%; height:100%; position:relative; }
-.preview-img { width:100%; height:100%; object-fit:contain; background:rgba(0,0,0,0.02); }
-.preview-overlay { position:absolute; bottom:0; left:0; right:0; padding:16px; background:linear-gradient(transparent,rgba(0,0,0,0.7)); }
-.preview-status { color:#fff; font-size:14px; font-weight:500; }
-.preview-close { position:absolute; top:12px; right:12px; width:32px; height:32px; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); color:#fff; border-radius:50%; font-size:16px; cursor:pointer; transition:all 0.2s; }
-.preview-close:hover { background:rgba(0,0,0,0.7); }
-
-.assessing-loader { display:flex; align-items:center; gap:10px; color:#fbbf24; font-size:14px; font-weight:500; }
-@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-.loader-ring { width:24px; height:24px; border:3px solid rgba(251,191,36,0.3); border-top-color:#fbbf24; border-radius:50%; animation: spin 1s linear infinite; }
-
-.advanced-panel { margin-top:16px; }
-.btn { padding:8px 18px; border-radius:8px; font-size:13px; cursor:pointer; border:1px solid var(--border); background:var(--bg-card); color:var(--text-secondary); transition:all 0.2s; }
-.btn:hover { background:rgba(0,0,0,0.04); }
-.btn-secondary { font-size:12px; padding:6px 14px; }
-
-.result-section { margin-top:24px; padding:20px; background:rgba(0,0,0,0.02); border-radius:16px; }
-.result-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; font-size:15px; font-weight:600; color:var(--text-title); }
-
-.grade-badge { display:flex; align-items:center; justify-content:center; gap:12px; padding:24px; border-radius:16px; margin-bottom:20px; }
-.grade-text { font-family:var(--font-display); font-size:48px; font-weight:800; color:#fff; }
-.grade-score { font-size:20px; color:rgba(255,255,255,0.9); font-weight:600; }
-
-.result-grid { display:grid; grid-template-columns:320px 1fr; gap:16px; margin-bottom:20px; }
-@media (max-width:900px) { .result-grid { grid-template-columns:1fr; } }
-
-.result-card { background:var(--bg-card); border-radius:12px; border:1px solid var(--border); overflow:hidden; }
-.card-title { padding:12px 16px; font-size:13px; font-weight:600; color:var(--text-title); border-bottom:1px solid var(--border); }
-.card-image { padding:12px; text-align:center; }
-.card-image img { max-width:100%; max-height:180px; border-radius:8px; object-fit:cover; }
-.card-content { padding:12px 16px; }
-.info-row { display:flex; justify-content:space-between; padding:6px 0; font-size:12px; border-bottom:1px solid rgba(0,0,0,0.03); align-items:center; }
-.info-row span { color:var(--text-muted); flex-shrink:0; width:60px; }
-.info-row strong { color:var(--text-primary); flex:1; margin-left:12px; }
-.info-row-desc { align-items:flex-start; }
-.info-row-desc span { flex-shrink:0; width:60px; }
-.info-row-desc strong { flex:1; margin-left:12px; text-align:left; line-height:1.6; word-break:break-word; }
-
-.recommendation-box { margin:12px 16px 16px; padding:12px; border-radius:8px; background:rgba(0,210,160,0.08); font-size:12px; }
-.recommendation-box.warn { background:var(--red-bg); }
-
-.indicators-section { margin-bottom:16px; }
-.section-title { font-size:13px; font-weight:600; color:var(--text-title); margin-bottom:12px; }
-.indicators-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
-.indicator-item { display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--bg-card); border-radius:8px; }
-.ind-name { width:80px; font-size:12px; color:var(--text-muted); flex-shrink:0; }
-.ind-bar-wrap { flex:1; height:8px; background:var(--border); border-radius:4px; overflow:hidden; }
-.ind-bar { height:100%; border-radius:4px; transition:width 0.5s; }
-.ind-value { width:40px; text-align:right; font-size:13px; font-weight:600; font-family:var(--font-mono); }
-
-.defects-section { padding:12px; background:var(--red-bg); border-radius:8px; font-size:12px; }
-.defect-tag { display:inline-block; padding:4px 10px; margin:4px 6px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--red); font-size:11px; }
-
-@media (max-width:1200px) { .stats-row { grid-template-columns:repeat(2,1fr); } }
-@media (max-width:768px) { .stats-row { grid-template-columns:1fr; } }
+/* ===== 页面头部 ===== */
+.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.ph-left { display: flex; flex-direction: column; gap: 4px; }
+.page-title { font-size: 22px; font-weight: 800; color: var(--text-title); margin: 0; }
+.subtitle { font-size: 13px; color: var(--text-muted); }
+.ph-right { display: flex; align-items: center; }
+.ph-stat { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: linear-gradient(135deg, rgba(0,210,160,0.08), rgba(0,210,160,0.04)); border: 1px solid rgba(0,210,160,0.2); border-radius: 24px; font-size: 13px; color: #059669; font-weight: 600; }
+.phs-icon { font-size: 16px; }
+.phs-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.4); animation: pulse-dot 2s ease-in-out infinite; }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(0.8); } }
 
 /* ===== 场景切换 ===== */
-.scene-switch {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-.scene-item {
-  flex: 1;
-  padding: 16px 20px;
-  border-radius: 14px;
-  border: 2px solid var(--border);
-  background: var(--bg-card);
-  cursor: pointer;
-  transition: all 0.25s;
-}
-.scene-item:hover { border-color: rgba(0,168,255,0.4); }
-.scene-item.active {
-  border-color: var(--accent);
-  background: linear-gradient(135deg, rgba(0,168,255,0.06), rgba(124,58,237,0.04));
-  box-shadow: 0 4px 16px rgba(0,168,255,0.1);
-}
-.scene-icon { font-size: 24px; display: block; margin-bottom: 6px; }
-.scene-label { font-size: 15px; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 4px; }
+.scene-switch { display: flex; gap: 16px; margin-bottom: 24px; }
+.scene-item { flex: 1; display: flex; align-items: flex-start; gap: 14px; padding: 18px 20px; border-radius: 16px; border: 2px solid var(--border); background: var(--bg-card); cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; }
+.scene-item::before { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(0,168,255,0.04), rgba(124,58,237,0.02)); opacity: 0; transition: opacity 0.3s; }
+.scene-item:hover { border-color: rgba(0,168,255,0.4); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,168,255,0.08); }
+.scene-item:hover::before { opacity: 1; }
+.scene-item.active { border-color: var(--accent); background: linear-gradient(135deg, rgba(0,168,255,0.06), rgba(124,58,237,0.04)); box-shadow: 0 4px 20px rgba(0,168,255,0.12); }
+.scene-item.active::before { opacity: 1; }
+.scene-icon-wrap { width: 48px; height: 48px; border-radius: 14px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.06); flex-shrink: 0; transition: all 0.3s; }
+.scene-icon-wrap.active { background: linear-gradient(135deg, rgba(0,168,255,0.12), rgba(124,58,237,0.08)); border-color: rgba(0,168,255,0.2); box-shadow: 0 2px 8px rgba(0,168,255,0.1); }
+.scene-icon { font-size: 22px; }
+.scene-content { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.scene-label { font-size: 15px; font-weight: 700; color: var(--text-primary); transition: color 0.3s; }
 .scene-item.active .scene-label { color: var(--accent); }
 .scene-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.scene-check { width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--aurora)); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; animation: popIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes popIn { from { transform: scale(0); } to { transform: scale(1); } }
 
-/* ===== 摄像头视图 ===== */
-.camera-container {
-  border-radius: 16px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: #000;
-  margin-bottom: 4px;
-}
-.cam-view {
-  position: relative;
-  width: 100%;
-  min-height: 320px;
-  background: #000;
-}
-.cam-video {
-  width: 100%;
-  min-height: 320px;
-  object-fit: cover;
-  display: block;
-}
-.cam-overlay {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.cam-crosshair-h { position:absolute; width:60%; height:1px; top:50%; left:20%; background:rgba(255,255,255,0.3); }
-.cam-crosshair-v { position:absolute; height:60%; width:1px; left:50%; top:20%; background:rgba(255,255,255,0.3); }
-.cam-corner { position:absolute; width:24px; height:24px; border-color:#00ff88; border-style:solid; }
-.cam-corner.tl { top:20%; left:20%; border-width:3px 0 0 3px; }
-.cam-corner.tr { top:20%; right:20%; border-width:3px 3px 0 0; }
-.cam-corner.bl { bottom:20%; left:20%; border-width:0 0 3px 3px; }
-.cam-corner.br { bottom:20%; right:20%; border-width:0 3px 3px 0; }
+/* ===== 主卡片 ===== */
+.main-card { margin-bottom: 20px; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.ch-left { display: flex; align-items: center; gap: 10px; }
+.header-icon { font-size: 20px; }
+.header-title { font-size: 16px; font-weight: 700; color: var(--text-title); }
+.header-tip { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); font-weight: 500; padding: 6px 12px; background: rgba(0,0,0,0.03); border-radius: 20px; }
+.ht-dot { width: 8px; height: 8px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--aurora)); animation: pulse-dot 2s ease-in-out infinite; }
 
-.cam-controls {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 28px;
-  padding: 14px 20px;
-  background: #000;
-}
-.cam-ctrl-btn {
-  cursor: pointer;
-  border: none;
-  background: none;
-  font-size: 18px;
-}
-.close-btn {
-  width:44px; height:44px; border-radius:50%;
-  background:rgba(255,255,255,0.12); color:#fff;
-  display:flex; align-items:center; justify-content:center;
-  transition: all 0.15s;
-}
-.close-btn:active { transform:scale(0.92); }
-.shutter-btn {
-  width:64px; height:64px; border-radius:50%;
-  background:#fff; border:3px solid #ccc;
-  display:flex; align-items:center; justify-content:center;
-  transition: all 0.12s;
-}
-.shutter-btn:active { transform: scale(0.9); background: #eee; }
-.shutter-inner {
-  width:48px; height:48px; border-radius:50%;
-  border:3px solid #333;
-}
-.cam-placeholder { width:64px; height:64px; }
-.cam-hint {
-  text-align: center;
-  font-size: 12px;
-  color: #00ff88;
-  padding: 8px 12px 10px;
-  background: #000;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
-}
+/* ===== 步骤指示器 ===== */
+.step-indicator { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 28px; padding: 20px 24px; background: rgba(0,0,0,0.02); border-radius: 14px; border: 1px solid rgba(0,0,0,0.04); }
+.step { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.step-circle { width: 40px; height: 40px; border-radius: 50%; background: var(--border); display: flex; align-items: center; justify-content: center; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 6px rgba(0,0,0,0.06); }
+.step-num { font-size: 14px; font-weight: 700; color: var(--text-muted); transition: all 0.4s; }
+.step-text { font-size: 12px; color: var(--text-muted); font-weight: 500; transition: all 0.4s; }
+.step.active .step-circle { background: linear-gradient(135deg, var(--accent), var(--aurora)); box-shadow: 0 4px 12px rgba(0,168,255,0.25); }
+.step.active .step-num { color: #fff; }
+.step.active .step-text { color: var(--text-primary); font-weight: 600; }
+.step.done .step-circle { background: var(--teal); }
+.step.done .step-num { color: #fff; }
+.step.done .step-text { color: var(--teal); }
+.step-line { width: 50px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; position: relative; }
+.sl-fill { width: 0%; height: 100%; background: linear-gradient(90deg, var(--teal), #22c55e); border-radius: 2px; transition: width 0.6s ease-out; }
+.step-line.active .sl-fill { width: 100%; }
+
+/* ===== 上传区域 ===== */
+.upload-area { width:100%; min-height:420px; border:2px dashed var(--border); border-radius:18px; cursor:pointer; position:relative; overflow:visible; transition:all 0.3s; background:rgba(0,0,0,0.01); }
+.upload-area:hover { border-color:var(--accent); background:rgba(0,168,255,0.02); }
+.hidden-input { position:absolute; width:0; height:0; opacity:0; }
+.upload-placeholder { width:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:20px 20px 24px; box-sizing:border-box; gap:12px; }
+.upload-main { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; }
+.upload-main h3 { font-size:18px; font-weight:600; color:var(--text-primary); margin:12px 0 4px 0; }
+.upload-main p { font-size:13px; color:var(--text-muted); margin:0; }
+.upload-icon-wrap { padding:12px; }
 
 /* 拍照大按钮 */
 .camera-big-btn {
@@ -692,114 +622,87 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 28px 32px;
-  border: 2px solid var(--accent);
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(0,168,255,0.08), rgba(124,58,237,0.05));
+  width: 100%;
+  max-width: 360px;
+  padding: 22px 20px;
+  border: 2px solid #00a8ff;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #e8f4fd, #f0f9ff);
   cursor: pointer;
   transition: all 0.2s;
-  margin-bottom: 16px;
-  max-width: 360px;
-  margin-left: auto;
-  margin-right: auto;
 }
 .camera-big-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 24px rgba(0,168,255,0.15);
+  background: linear-gradient(135deg, #d4ecfb, #e8f4fd);
+  box-shadow: 0 4px 14px rgba(0,168,255,0.15);
+  transform: translateY(-1px);
 }
-.cbb-icon { font-size: 36px; }
-.cbb-text { font-size: 16px; font-weight: 700; color: var(--accent); }
-.cbb-sub { font-size: 11px; color: var(--text-muted); }
+.camera-big-btn:active {
+  transform: scale(0.98);
+}
+.cbb-icon { font-size: 32px; }
+.cbb-text { font-size: 16px; font-weight: 700; color: #0369a1; }
+.cbb-sub { font-size: 11px; color: #6b9cc2; margin-top: 2px; }
 
+/* 分隔线 */
 .upload-divider {
-  display: flex; align-items: center; gap: 12px;
-  margin: 8px 0 12px; color: var(--text-muted); font-size: 12px;
+  position: relative;
+  text-align: center;
+  width: 100%;
+  max-width: 400px;
+  margin: 4px 0;
 }
-.upload-divider::before, .upload-divider::after {
-  content: ''; flex:1; height:1px; background: var(--border);
+.upload-divider::before,
+.upload-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: calc(50% - 40px);
+  height: 1px;
+  background: var(--border);
 }
+.upload-divider::before { left: 0; }
+.upload-divider::after { right: 0; }
+.upload-divider span {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: #fff;
+  padding: 0 10px;
+  position: relative;
+}
+.upload-features { width:100%; max-width:540px; padding-top:12px; border-top:1px dashed var(--border); }
+.feature-row { margin-bottom:10px; }
+.feature-row:last-child { margin-bottom:0; }
+.feature-title { font-size:12px; color:var(--text-muted); font-weight:600; margin-bottom:10px; display: flex; align-items: center; gap: 4px; }
+.format-tags { display:flex; flex-wrap:wrap; gap:8px; }
+.format-tags span { font-size:12px; padding:6px 14px; background:rgba(0,0,0,0.04); border-radius:20px; border:1px solid rgba(0,0,0,0.06); transition:all 0.2s; }
+.format-tags span:hover { background:rgba(0,168,255,0.08); border-color:var(--accent); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,168,255,0.08); }
+.demo-images { display:flex; gap:14px; justify-content: center; }
+.demo-img { cursor:pointer; text-align:center; }
+.demo-icon { width:64px; height:64px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:32px; border:2px solid transparent; transition:all 0.2s; box-shadow:0 2px 8px rgba(0,0,0,0.06); background:var(--bg-card); }
+.demo-img:hover .demo-icon { border-color:var(--accent); transform:scale(1.08); box-shadow:0 4px 16px rgba(0,168,255,0.15); }
+.demo-img span { display:block; font-size:11px; color:var(--text-muted); margin-top:6px; font-weight: 500; }
+.upload-preview { width:100%; height:100%; position:relative; }
+.preview-img { width:100%; height:100%; object-fit:contain; background:rgba(0,0,0,0.02); }
+.preview-overlay { position:absolute; bottom:0; left:0; right:0; padding:16px; background:linear-gradient(transparent,rgba(0,0,0,0.7)); }
+.preview-status { color:#fff; font-size:14px; font-weight:500; }
+.preview-close { position:absolute; top:12px; right:12px; width:36px; height:36px; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.5); color:#fff; border-radius:50%; font-size:16px; cursor:pointer; transition:all 0.2s; }
+.preview-close:hover { background:rgba(0,0,0,0.7); transform: scale(1.1); }
+.assessing-loader { display:flex; align-items:center; gap:10px; color:#fbbf24; font-size:14px; font-weight:500; }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+.loader-ring { width:24px; height:24px; border:3px solid rgba(251,191,36,0.3); border-top-color:#fbbf24; border-radius:50%; animation: spin 1s linear infinite; }
 
-/* ===== 放行决策卡片 ===== */
-.decision-card {
-  margin-top: 20px;
-  border-radius: 16px;
-  overflow: hidden;
-  border: 2px solid transparent;
-  animation: slideUp 0.35s ease-out;
+/* ===== 响应式优化 ===== */
+@media (max-width: 768px) {
+  .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .scene-switch { flex-direction: column; }
+  .scene-item { padding: 14px 16px; }
+  .step-indicator { padding: 14px 12px; gap: 6px; }
+  .step-line { width: 24px; }
+  .step-circle { width: 34px; height: 34px; }
+  .step-text { font-size: 10px; }
+  .upload-area { min-height: 460px; }
+  .dc-actions { flex-direction: column; }
+  .dc-grade-showcase { flex-direction: column; text-align: center; }
+  .dc-grid { grid-template-columns: 1fr; }
 }
-@keyframes slideUp { from { opacity:0; transform: translateY(12px); } to { opacity:1; transform: translateY(0); } }
-
-.decision-pass { border-color: #22c55e; background: linear-gradient(135deg, #f0fdf4, #ecfdf5); }
-.decision-warn { border-color: #f59e0b; background: linear-gradient(135deg, #fffbeb, #fefce8); }
-.decision-caution { border-color: #f97316; background: linear-gradient(135deg, #fff7ed, #fef3e2); }
-.decision-reject { border-color: #ef4444; background: linear-gradient(135deg, #fef2f2, #fee2e2); }
-
-.dc-top {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 14px 20px;
-}
-.dc-scene-tag {
-  font-size: 13px; font-weight: 700; color: var(--text-secondary);
-}
-.dc-result-badge {
-  font-size: 14px; font-weight: 700; padding: 4px 14px; border-radius: 8px;
-}
-.decision-pass .dc-result-badge { background: #d1fae5; color: #059669; }
-.decision-warn .dc-result-badge { background: #fef3c7; color: #d97706; }
-.decision-caution .dc-result-badge { background: #ffedd5; color: #ea580c; }
-.decision-reject .dc-result-badge { background: #fee2e2; color: #dc2626; }
-
-.dc-body { padding: 0 20px; }
-.dc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
-@media (max-width:600px) { .dc-grid { grid-template-columns: repeat(2, 1fr); } }
-.dc-field {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 8px 10px; background: rgba(255,255,255,0.6); border-radius: 8px;
-}
-.dcf-label { font-size: 11px; color: var(--text-muted); }
-.dcf-value { font-size: 13px; font-weight: 600; color: var(--text-primary); }
-.grade-val { font-family: var(--font-display); font-size: 15px !important; }
-
-.dc-defects {
-  padding: 8px 10px; background: rgba(239,68,68,0.08); border-radius: 8px;
-  font-size: 12px; color: var(--red); margin-bottom: 12px;
-}
-
-.dc-actions {
-  display: flex; gap: 10px; padding: 16px 20px;
-  background: rgba(255,255,255,0.5);
-  border-top: 1px solid rgba(0,0,0,0.05);
-}
-.dc-action-btn {
-  flex: 1; padding: 12px 16px; border-radius: 10px;
-  font-size: 13px; font-weight: 700; cursor: pointer; border: none;
-  transition: all 0.15s;
-}
-.dc-action-btn:active { transform: scale(0.97); }
-.primary { background: #22c55e; color: #fff; }
-.primary-warn { background: #f59e0b; color: #fff; }
-.caution { background: #f97316; color: #fff; }
-.danger { background: #ef4444; color: #fff; }
-.secondary { background: #fff; color: #666; border: 1px solid #ddd; }
-
-.defect-tag-sm {
-  display:inline-block; padding:2px 8px; margin:2px 4px; border-radius:4px;
-  background:rgba(239,68,68,0.15); color:var(--red); font-size:11px;
-}
-
-/* 详情折叠 */
-.result-details {
-  margin-top: 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-}
-.rd-header {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 16px;
-  font-size: 13px; font-weight: 600; color: var(--text-title);
-  cursor: pointer; background: rgba(0,0,0,0.02); user-select: none;
-}
-.rd-header:hover { background: rgba(0,0,0,0.04); }
-.rd-toggle { font-size: 11px; color: var(--text-muted); }
 </style>

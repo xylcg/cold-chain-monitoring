@@ -100,7 +100,10 @@
                 {{ trackingData[order.order_id].temperature?.is_compliant ? '✅ 温度正常' : '⚠️ 温度异常！' }}
               </div>
             </div>
-            <!-- 操作按钮 -->
+            <!-- 操作按钮：待接单可删除 -->
+            <div class="mci-actions" v-if="order.status === 'pending'">
+              <button class="mcia-btn" @click.stop="deleteCustomerOrder(order)">🗑 删除订单</button>
+            </div>
             <div class="mci-actions" v-if="order.status === 'delivered'">
               <button class="mcia-btn success" @click.stop="confirmReceive(order)">📦 确认签收</button>
               <button class="mcia-btn track" @click.stop="openTracking(order)" v-if="trackingData[order.order_id]">🌡 追踪</button>
@@ -273,6 +276,28 @@
               {{ trackingDetail.temperature?.is_compliant ? '✅ 温度合规 · 全程冷链保障' : '⚠️ 温度异常 · 偏差 ' + (trackingDetail.temperature?.deviation?.toFixed(1)||0) + '℃' }}
             </div>
             <button class="mtk-refresh" @click="loadTrackingDetail(trackingOrder)">🔄 刷新数据</button>
+
+            <!-- 温度曲线 -->
+            <div class="mtk-section">
+              <div class="mtks-title">🌡 全程温度曲线</div>
+              <div class="mtks-curve">
+                <canvas ref="custCurveCanvas" class="cust-curve-canvas"></canvas>
+                <div v-if="custCurveLoading" class="cust-curve-loading">加载温度曲线中…</div>
+              </div>
+            </div>
+
+            <!-- 区块链存证 -->
+            <div class="mtk-section" v-if="custBlockchain">
+              <div class="mtks-title">🔗 区块链存证</div>
+              <div class="mtks-bc" :class="{ ok: custBlockchain.on_chain }">
+                <div class="bc-row"><span>存证状态</span><strong :class="custBlockchain.on_chain ? 'text-green' : 'text-gray'">{{ custBlockchain.on_chain ? '✅ 已上链' : '⏳ 待存证' }}</strong></div>
+                <div class="bc-row" v-if="custBlockchain.block_number"><span>区块编号</span><strong>#{{ custBlockchain.block_number }}</strong></div>
+                <div class="bc-row" v-if="custBlockchain.block_hash"><span>区块哈希</span><strong class="bc-hash">{{ custBlockchain.block_hash.slice(0, 24) }}…</strong></div>
+                <div class="bc-row" v-if="custBlockchain.merkle_root"><span>Merkle根</span><strong class="bc-hash">{{ custBlockchain.merkle_root.slice(0, 24) }}…</strong></div>
+                <div class="bc-row" v-if="custBlockchain.certified_at"><span>存证时间</span><strong>{{ custBlockchain.certified_at.slice(0, 19) }}</strong></div>
+                <div class="bc-tip">数据经区块链加密存证，不可篡改</div>
+              </div>
+            </div>
           </div>
           <div class="mbd-body" v-else style="text-align:center;padding:20px;color:#999">加载中...</div>
         </div>
@@ -315,6 +340,122 @@
         </div>
       </div>
 
+      <!-- ===== 查货弹窗 ===== -->
+      <div class="mb-overlay" v-if="queryVisible" @click.self="queryVisible = false">
+        <div class="mb-detail">
+          <div class="mbd-header">
+            <span class="mbd-id">🔍 扫码 / 查货</span>
+            <span class="mbd-close" @click="queryVisible = false">✕</span>
+          </div>
+          <div class="mbd-body">
+            <div class="qry-tip">输入运单号或溯源码查询全程温控与区块链存证</div>
+            <div class="qry-input-row">
+              <input v-model="queryCode" class="mb-input" placeholder="如 WB20240101001 或 CC1001" @keyup.enter="doQuery" />
+              <button class="qry-scan" @click="startScan" :disabled="scanning">📷 扫码</button>
+            </div>
+            <div v-if="scanning" class="qry-scan-box">
+              <video ref="scanVideo" class="qry-scan-video" autoplay playsinline muted></video>
+              <div class="qry-scan-tip">将二维码放入框内…（若无法自动识别，请手动输入）</div>
+              <button class="qry-scan-cancel" @click="stopScan">取消</button>
+            </div>
+            <button class="mb-submit" @click="doQuery" :disabled="queryLoading">
+              {{ queryLoading ? '查询中...' : '🔍 查询' }}
+            </button>
+
+            <div v-if="queryResult" class="qry-result">
+              <div class="qryr-head">
+                <span class="qryr-cargo">{{ queryResult.cargo_name }}</span>
+                <span class="qryr-status" :class="queryResult.is_compliant ? 'text-green' : 'text-red'">
+                  {{ queryResult.is_compliant ? '✅ 全程合规' : '⚠️ 温度异常' }}
+                </span>
+              </div>
+              <div class="qryr-row"><span>运单号</span><strong>{{ queryResult.waybill_id }}</strong></div>
+              <div class="qryr-row"><span>溯源码</span><strong>{{ queryResult.trace_code }}</strong></div>
+              <div class="qryr-row"><span>路线</span><strong>{{ queryResult.origin }} → {{ queryResult.destination }}</strong></div>
+              <div class="qryr-row"><span>温控要求</span><strong>{{ queryResult.temperature_requirement }}</strong></div>
+              <div class="qryr-row"><span>当前温度</span><strong :class="{ warn: !queryResult.is_compliant }">{{ queryResult.current_temperature }}℃</strong></div>
+              <div class="qryr-row"><span>异常次数</span><strong :class="{ warn: queryResult.violations_count > 0 }">{{ queryResult.violations_count }}次</strong></div>
+
+              <!-- 温度曲线 -->
+              <div class="qryr-curve">
+                <div class="qryrc-title">🌡 全程温度曲线</div>
+                <canvas ref="queryCurveCanvas" class="qryrc-canvas"></canvas>
+                <div v-if="queryCurveLoading" class="qryrc-loading">曲线加载中...</div>
+              </div>
+
+              <!-- 温度证明下载（复用 Traceability 的 getReport 接口） -->
+              <button class="qryr-download" @click="downloadQueryReport" :disabled="queryReportLoading">
+                {{ queryReportLoading ? '生成中...' : '📄 下载温度证明文件' }}
+              </button>
+
+              <div class="qryr-steps">
+                <div v-for="s in (queryResult.steps || [])" :key="s.name" class="qryr-step" :class="{ done: s.completed }">
+                  <span class="qryrs-icon">{{ s.completed ? s.icon : '○' }}</span>
+                  <span class="qryrs-name">{{ s.name }}</span>
+                </div>
+              </div>
+            </div>
+            <div v-if="queryError" class="qry-error">⚠️ {{ queryError }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 我的（个人中心）===== -->
+      <div class="mb-page" v-show="activeTab === 'profile'">
+        <div class="profile-page">
+          <!-- 用户卡片 -->
+          <div class="pf-card">
+            <div class="pf-avatar">👤</div>
+            <div class="pf-name">{{ appStore.user?.username || '客户用户' }}</div>
+            <div class="pf-role">{{ appStore.user?.role === 'customer' ? '客户' : (appStore.user?.role || 'customer') }}</div>
+          </div>
+
+          <!-- 统计 -->
+          <div class="pf-stats">
+            <div class="pfs-item">
+              <span class="pfs-val">{{ orders.length }}</span>
+              <span class="pfs-lbl">全部订单</span>
+            </div>
+            <div class="pfs-item">
+              <span class="pfs-val accent">{{ activeCount }}</span>
+              <span class="pfs-lbl">进行中</span>
+            </div>
+            <div class="pfs-item">
+              <span class="pfs-val success">{{ completedCount }}</span>
+              <span class="pfs-lbl">已完成</span>
+            </div>
+            <div class="pfs-item">
+              <span class="pfs-val gold">¥{{ totalSpent }}</span>
+              <span class="pfs-lbl">消费总额</span>
+            </div>
+          </div>
+
+          <!-- 功能菜单 -->
+          <div class="pf-menu">
+            <div class="pfm-item" @click="activeTab = 'orders'; loadMyOrders()">
+              <span class="pfm-icon">📋</span>
+              <span class="pfm-text">我的订单</span>
+              <span class="pfm-arrow">›</span>
+            </div>
+            <div class="pfm-item" @click="activeTab = 'create'">
+              <span class="pfm-icon">📦</span>
+              <span class="pfm-text">新建订单</span>
+              <span class="pfm-arrow">›</span>
+            </div>
+            <div class="pfm-item" @click="queryVisible = true">
+              <span class="pfm-icon">🔍</span>
+              <span class="pfm-text">运单查询</span>
+              <span class="pfm-arrow">›</span>
+            </div>
+          </div>
+
+          <!-- 退出登录 -->
+          <button class="pf-logout" @click="handleLogout">
+            🚪 退出登录
+          </button>
+        </div>
+      </div>
+
       <!-- ===== 底部导航 ===== -->
       <div class="mb-tabbar">
         <div class="mt-item" :class="{ active: activeTab === 'orders' }" @click="activeTab = 'orders'; loadMyOrders()">
@@ -325,9 +466,13 @@
           <span class="mt-icon-create">＋</span>
           <span class="mt-label">下单</span>
         </div>
-        <div class="mt-item" @click="handleLogout">
+        <div class="mt-item" @click="queryVisible = true">
+          <span class="mt-icon">🔍</span>
+          <span class="mt-label">查货</span>
+        </div>
+        <div class="mt-item" :class="{ active: activeTab === 'profile' }" @click="activeTab = 'profile'">
           <span class="mt-icon">👤</span>
-          <span class="mt-label">退出</span>
+          <span class="mt-label">我的</span>
         </div>
       </div>
     </div>
@@ -336,9 +481,14 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { customerAPI } from '@/api'
+import { useRouter } from 'vue-router'
+import { customerAPI, traceabilityAPI } from '@/api'
+import { useAppStore } from '@/stores/app'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
+
+const router = useRouter()
+const appStore = useAppStore()
 
 // ===== Tab =====
 const activeTab = ref('orders')
@@ -556,7 +706,9 @@ async function loadTrackingSummary() {
 async function openTracking(o: any) {
   trackingOrder.value = o
   trackingDetail.value = null
+  custBlockchain.value = null
   await loadTrackingDetail(o)
+  loadTrackingExtras(o)
 }
 
 async function loadTrackingDetail(o: any) {
@@ -590,10 +742,189 @@ async function submitFeedback() {
 }
 
 function handleLogout() {
-  localStorage.removeItem('token')
-  localStorage.removeItem('userRole')
-  localStorage.removeItem('username')
-  window.location.hash = '#/login'
+  appStore.logout()
+  router.push('/login')
+}
+
+// ===== 查货 / 扫码 =====
+const queryVisible = ref(false)
+const queryCode = ref('')
+const queryLoading = ref(false)
+const queryResult = ref<any>(null)
+const queryError = ref('')
+const queryCurveCanvas = ref<HTMLCanvasElement | null>(null)
+const queryCurveLoading = ref(false)
+const queryReportLoading = ref(false)
+const scanning = ref(false)
+const scanVideo = ref<HTMLVideoElement | null>(null)
+let scanStream: MediaStream | null = null
+
+async function doQuery() {
+  const code = queryCode.value.trim()
+  if (!code) { ElMessage.warning('请输入运单号或溯源码'); return }
+  queryLoading.value = true
+  queryError.value = ''
+  queryResult.value = null
+  try {
+    const res: any = await customerAPI.miniQuery(code)
+    if (res.error) {
+      queryError.value = res.error
+    } else {
+      queryResult.value = res
+      // 加载温度曲线（复用客户温控曲线接口）
+      loadQueryCurve(res.waybill_id)
+    }
+  } catch (err: any) {
+    queryError.value = err?.response?.data?.detail || '查询失败，请重试'
+  } finally {
+    queryLoading.value = false
+  }
+}
+
+async function loadQueryCurve(waybillId: string) {
+  if (!waybillId) return
+  queryCurveLoading.value = true
+  try {
+    const res: any = await customerAPI.getTemperatureCurve(waybillId)
+    const points = res.points || []
+    await nextTick()
+    drawCustCurve(points, res.threshold)
+  } catch {
+    const canvas = queryCurveCanvas.value
+    if (canvas) {
+      const ctx = canvas.getContext('2d')
+      if (ctx) { ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = '#999'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('暂无温度曲线数据', (canvas.clientWidth || 320) / 2, 80) }
+    }
+  } finally {
+    queryCurveLoading.value = false
+  }
+}
+
+// 下载温度证明文件：复用 Traceability.vue 的 traceabilityAPI.getReport 接口
+async function downloadQueryReport() {
+  const wb = queryResult.value?.waybill_id
+  if (!wb) { ElMessage.warning('请先查询到运单再下载'); return }
+  queryReportLoading.value = true
+  try {
+    const res: any = await traceabilityAPI.getReport(wb, 'text')
+    const blob = new Blob([res], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `temperature_certificate_${wb}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('温度证明文件已下载')
+  } catch {
+    ElMessage.error('下载失败，请重试')
+  } finally {
+    queryReportLoading.value = false
+  }
+}
+
+async function startScan() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+    scanStream = stream
+    scanning.value = true
+    await nextTick()
+    if (scanVideo.value) {
+      scanVideo.value.srcObject = stream
+    }
+    ElMessage.info('摄像头已开启，请对准二维码；若无法自动识别，请手动输入运单号')
+  } catch {
+    ElMessage.warning('无法调用摄像头，请手动输入运单号')
+  }
+}
+
+function stopScan() {
+  if (scanStream) {
+    scanStream.getTracks().forEach(t => t.stop())
+    scanStream = null
+  }
+  scanning.value = false
+}
+
+// ===== 追踪弹窗：温度曲线 + 区块链存证 =====
+const custCurveCanvas = ref<HTMLCanvasElement | null>(null)
+const custCurveLoading = ref(false)
+const custBlockchain = ref<any>(null)
+
+async function loadTrackingExtras(o: any) {
+  const id = o.order_id
+  // 温度曲线
+  custCurveLoading.value = true
+  try {
+    const res: any = await customerAPI.getTemperatureCurve(id)
+    const points = res.points || []
+    await nextTick()
+    drawCustCurve(points, res.threshold)
+  } catch { /* ignore */ }
+  finally { custCurveLoading.value = false }
+  // 区块链存证
+  try {
+    const bc: any = await customerAPI.verifyBlockchain(id)
+    custBlockchain.value = bc
+  } catch { custBlockchain.value = null }
+}
+
+function drawCustCurve(points: any[], threshold?: any) {
+  const canvas = custCurveCanvas.value
+  if (!canvas) return
+  const dpr = window.devicePixelRatio || 1
+  const cssW = canvas.clientWidth || 320
+  const cssH = 160
+  canvas.width = cssW * dpr
+  canvas.height = cssH * dpr
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.scale(dpr, dpr)
+  ctx.clearRect(0, 0, cssW, cssH)
+  if (!points.length) {
+    ctx.fillStyle = '#999'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center'
+    ctx.fillText('暂无温度曲线数据', cssW / 2, cssH / 2)
+    return
+  }
+  const padL = 34, padR = 10, padT = 14, padB = 22
+  const plotW = cssW - padL - padR
+  const plotH = cssH - padT - padB
+  const temps = points.map((p: any) => p.temperature)
+  let minT = Math.min(...temps), maxT = Math.max(...temps)
+  if (threshold && threshold.min !== undefined) minT = Math.min(minT, threshold.min)
+  if (threshold && threshold.max !== undefined) maxT = Math.max(maxT, threshold.max)
+  if (minT === maxT) { minT -= 1; maxT += 1 }
+  const range = maxT - minT
+  const xAt = (i: number) => padL + (points.length === 1 ? plotW / 2 : (i / (points.length - 1)) * plotW)
+  const yAt = (t: number) => padT + plotH - ((t - minT) / range) * plotH
+  if (threshold && threshold.min !== undefined && threshold.max !== undefined) {
+    const yMax = yAt(threshold.max), yMin = yAt(threshold.min)
+    ctx.fillStyle = 'rgba(34,197,94,0.10)'
+    ctx.fillRect(padL, yMax, plotW, yMin - yMax)
+    ctx.strokeStyle = 'rgba(34,197,94,0.5)'; ctx.setLineDash([4, 3])
+    ctx.beginPath(); ctx.moveTo(padL, yMax); ctx.lineTo(padL + plotW, yMax); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(padL, yMin); ctx.lineTo(padL + plotW, yMin); ctx.stroke()
+    ctx.setLineDash([])
+  }
+  ctx.strokeStyle = '#00a8ff'; ctx.lineWidth = 2
+  ctx.beginPath()
+  points.forEach((p: any, i: number) => {
+    const x = xAt(i), y = yAt(p.temperature)
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+  points.forEach((p: any, i: number) => {
+    const x = xAt(i), y = yAt(p.temperature)
+    const exceed = threshold && (p.temperature < threshold.min || p.temperature > threshold.max)
+    ctx.fillStyle = exceed ? '#ef4444' : '#00a8ff'
+    ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2); ctx.fill()
+  })
+  ctx.fillStyle = '#888'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right'
+  ctx.fillText(maxT.toFixed(1) + '℃', padL - 4, padT + 4)
+  ctx.fillText(minT.toFixed(1) + '℃', padL - 4, padT + plotH)
+  ctx.textAlign = 'left'
+  ctx.fillText(String(points[0].time || ''), padL, cssH - 6)
+  ctx.textAlign = 'right'
+  ctx.fillText(String(points[points.length - 1].time || ''), padL + plotW, cssH - 6)
 }
 
 onMounted(() => {
@@ -873,6 +1204,93 @@ onMounted(() => {
 }
 .mt-label { font-size: 10px; color: #999; }
 .mt-item.active .mt-label { color: #00a8ff; font-weight: 600; }
+
+/* ===== 查货弹窗 ===== */
+.qry-tip { font-size: 12px; color: #888; margin-bottom: 10px; line-height: 1.5; }
+.qry-input-row { display: flex; gap: 8px; }
+.qry-input-row .mb-input { flex: 1; }
+.qry-scan {
+  flex-shrink: 0; padding: 0 14px; border: 1px solid #00a8ff; background: #e8f4fd;
+  color: #0369a1; border-radius: 8px; font-size: 13px; font-weight: 600;
+}
+.qry-scan:disabled { opacity: 0.5; }
+.qry-scan-box { margin-top: 10px; position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+.qry-scan-video { width: 100%; display: block; min-height: 200px; object-fit: cover; }
+.qry-scan-tip { position: absolute; bottom: 36px; left: 0; right: 0; text-align: center; color: #fff; font-size: 11px; padding: 0 10px; text-shadow: 0 1px 2px #000; }
+.qry-scan-cancel { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); background: rgba(255,255,255,0.9); color: #333; border: none; border-radius: 6px; padding: 4px 16px; font-size: 12px; }
+.qry-result { margin-top: 14px; border-top: 1px solid #f0f0f0; padding-top: 12px; }
+.qryr-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.qryr-cargo { font-size: 14px; font-weight: 700; color: #333; }
+.qryr-status { font-size: 12px; font-weight: 600; }
+.qryr-row { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed #f0f0f0; }
+.qryr-row span { color: #999; }
+.qryr-steps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.qryr-step { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #999; background: #f5f7fa; border-radius: 6px; padding: 3px 8px; }
+.qryr-step.done { color: #00a8ff; background: #e8f4fd; }
+.qry-error { margin-top: 10px; color: #ef4444; font-size: 12px; }
+.qryr-curve { margin-top: 12px; background: #fafbfc; border: 1px solid #eef0f3; border-radius: 10px; padding: 10px; }
+.qryrc-title { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 6px; }
+.qryrc-canvas { width: 100%; height: 160px; display: block; }
+.qryrc-loading { font-size: 12px; color: #999; text-align: center; padding: 8px 0; }
+.qryr-download { margin-top: 12px; width: 100%; height: 40px; border: none; border-radius: 10px; background: linear-gradient(135deg, #00a8ff, #0077cc); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; }
+.qryr-download:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ===== 追踪弹窗：曲线 + 区块链 ===== */
+.mtk-section { margin-top: 14px; border-top: 1px solid #f0f0f0; padding-top: 12px; }
+.mtks-title { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 8px; }
+.mtks-curve { position: relative; width: 100%; background: #fafcff; border: 1px solid #eef2f7; border-radius: 10px; padding: 6px; box-sizing: border-box; }
+.cust-curve-canvas { width: 100%; height: 160px; display: block; }
+.cust-curve-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #999; }
+.mtks-bc { background: #f8fafc; border: 1px solid #e8edf2; border-radius: 10px; padding: 10px 12px; }
+.mtks-bc.ok { border-color: #c3e6cb; background: #f3fbf5; }
+.bc-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+.bc-row span { color: #999; }
+.bc-hash { font-family: monospace; font-size: 11px; color: #555; }
+.bc-tip { margin-top: 6px; font-size: 10px; color: #aaa; text-align: center; }
+
+/* ===== 个人中心 ===== */
+.profile-page { padding: 16px 12px; }
+.pf-card {
+  display: flex; flex-direction: column; align-items: center;
+  background: linear-gradient(135deg, #00a8ff, #7c3aed);
+  border-radius: 16px; padding: 28px 20px 24px; color: #fff; margin-bottom: 16px;
+}
+.pf-avatar {
+  width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,.25);
+  display: flex; align-items: center; justify-content: center; font-size: 32px; margin-bottom: 10px;
+}
+.pf-name { font-size: 18px; font-weight: 700; }
+.pf-role { font-size: 12px; opacity: .8; margin-top: 4px; }
+
+.pf-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 8px; background: #fff; border-radius: 14px; padding: 14px 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.04); margin-bottom: 12px;
+}
+.pfs-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.pfs-val { font-size: 17px; font-weight: 800; color: #1a1a2e; }
+.pfs-val.accent { color: #00a8ff; }
+.pfs-val.success { color: var(--teal); }
+.pfs-val.gold { color: #f59e0b; font-size: 13px; }
+.pfs-lbl { font-size: 10px; color: #999; }
+
+.pf-menu { background: #fff; border-radius: 14px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.04); margin-bottom: 16px; }
+.pfm-item {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+  border-bottom: 1px solid #f5f5f5; cursor: pointer; transition: background .15s;
+}
+.pfm-item:last-child { border-bottom: none; }
+.pfm-item:active { background: #fafafa; }
+.pfm-icon { font-size: 20px; }
+.pfm-text { flex: 1; font-size: 14px; color: #333; font-weight: 500; }
+.pfm-arrow { color: #ccc; font-size: 18px; }
+
+.pf-logout {
+  width: 100%; padding: 14px; border: none; border-radius: 12px;
+  background: #fef2f2; color: #ef4444; font-size: 15px; font-weight: 600;
+  cursor: pointer; transition: opacity .2s;
+}
+.pf-logout:active { opacity: .7; }
 
 @media (min-width: 768px) {
   .mobile-wrap { border-radius: 16px; margin: 20px; min-height: auto; box-shadow: 0 4px 30px rgba(0,0,0,0.08); }

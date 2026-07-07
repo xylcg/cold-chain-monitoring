@@ -262,7 +262,18 @@ export const driverAPI = {
     api.get('/driver/upload-history', { params: { waybill_id: waybillId, limit } }),
   getWaybills: (status?: string, limit?: number) => api.get('/driver/waybills', { params: { status, limit } }),
   getWaybillDetail: (waybillId: string) => api.get(`/driver/waybills/${waybillId}`),
+  stationCheckin: (waybillId: string, stationName: string) =>
+    api.post('/driver/station-checkin', { waybill_id: waybillId, station_name: stationName }),
   getTracking: () => api.get('/driver/tracking'),
+  // 温度记录纸 AI 识别（OCR + 视觉大模型，无 Key 时后端降级）
+  recognizeTemperaturePaper: (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return api.post('/driver/recognize-temperature-paper', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    })
+  },
 }
 
 export const resourceAPI = {

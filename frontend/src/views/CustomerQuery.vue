@@ -23,6 +23,7 @@
             <div class="code-row">
               <code class="waybill-code">{{ queryResult.waybill_id }}</code>
               <code class="trace-code">{{ queryResult.trace_code }}</code>
+              <button class="copy-btn" @click="copyTraceCode" title="复制溯源码">📋 复制</button>
             </div>
           </div>
           <span class="comp-badge" :class="queryResult.is_compliant ? 'ok' : 'fail'">
@@ -365,6 +366,16 @@ async function queryWaybill() {
   }
 }
 
+// 复制溯源码（复用 Traceability.vue 的 copyTraceCode 逻辑）
+function copyTraceCode() {
+  const code = queryResult.value?.trace_code
+  if (!code) { ElMessage.warning('请先查询到运单'); return }
+  navigator.clipboard.writeText(code).then(
+    () => ElMessage.success('溯源码已复制'),
+    () => ElMessage.error('复制失败，请手动复制')
+  )
+}
+
 async function loadCurveData() {
   if (!queryResult.value) return
   try {
@@ -595,6 +606,8 @@ onMounted(() => {})
 .code-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .waybill-code { font-family: var(--font-mono); font-size: 13px; color: var(--accent); background: var(--accent-bg); padding: 3px 8px; border-radius: 4px; }
 .trace-code { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); background: var(--bg-input); padding: 3px 8px; border-radius: 4px; }
+.copy-btn { border: 1px solid var(--border); background: #fff; color: var(--accent); font-size: 12px; padding: 3px 10px; border-radius: 4px; cursor: pointer; transition: all .15s; }
+.copy-btn:hover { background: var(--accent-bg); border-color: var(--accent); }
 
 .comp-badge { font-size: 12px; font-weight: 600; padding: 8px 16px; border-radius: 20px; letter-spacing: 0.03em; }
 .comp-badge.ok { background: var(--teal-bg); color: var(--teal); border: 1px solid rgba(0,210,160,0.12); }

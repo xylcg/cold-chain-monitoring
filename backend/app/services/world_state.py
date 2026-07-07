@@ -607,6 +607,9 @@ def get_world_state(force_refresh: bool = False):
             "unit": "kg",
             "driver_name": f"司机{random.choice(['张','李','王','赵','孙'])}师傅",
             "driver_id": f"driver0{random.randint(1,5)}",
+            "receiver": f"{dest_city}{random.choice(['冷链仓','生鲜仓','配送中心','冷库'])}收货组",
+            "receiver_contact": f"1{random.choice(['38','39','37','36','50'])}{random.randint(10000000, 99999999)}",
+            "checkin_stations": [],
             "created_at": datetime.fromtimestamp(now - 24 * 3600).isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
         }

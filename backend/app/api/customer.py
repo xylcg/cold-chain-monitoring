@@ -948,7 +948,41 @@ async def mini_query(
                 break
 
     if not trace_code or trace_code not in TRACE_DATA:
-        return {"error": "未找到该运单记录"}
+        # Fallback: 查客户下单创建的内存订单（CUSTOMER_ORDERS）
+        cust_order = None
+        for oid, o in CUSTOMER_ORDERS.items():
+            if code == oid or code == o.get("trace_code", "") or code == o.get("waybill_id", ""):
+                cust_order = o
+                break
+        if not cust_order:
+            return {"error": "未找到该运单记录"}
+        # 用客户订单构造兼容返回格式
+        status = cust_order.get("status", "pending")
+        steps = []
+        for stage in STAGES:
+            steps.append({
+                "name": stage["name"],
+                "icon": stage["icon"],
+                "completed": status in ("completed",) and stage["key"] in ("signed",),
+                "time": "",
+                "avg_temp": 0,
+            })
+        return {
+            "success": True,
+            "waybill_id": cust_order.get("order_id", ""),
+            "trace_code": cust_order.get("trace_code", ""),
+            "cargo_name": cust_order.get("cargo_name", ""),
+            "cargo_category": cust_order.get("cargo_category", ""),
+            "origin": cust_order.get("origin", ""),
+            "destination": cust_order.get("destination", ""),
+            "temperature_requirement": cust_order.get("temperature_requirement", ""),
+            "current_temperature": 0,
+            "is_compliant": True,
+            "violations_count": 0,
+            "status": status,
+            "steps": steps,
+            "temperature_summary": {"avg": 0, "min": 0, "max": 0},
+        }
 
     data = TRACE_DATA[trace_code]
     record_ids = TRACE_CODE_MAP.get(trace_code, [])
@@ -1044,6 +1078,103 @@ async def get_waybill_alerts(
         "alert_count": len(alerts),
         "alerts": alerts,
     }
+
+
+# ==================== 客户下单接口 ====================
+
+# 内存订单存储（演示用，重启即清空；生产应写入数据库）
+CUSTOMER_ORDERS: Dict[str, Any] = {}
+_ORDER_SEQ = {"n": 0}
+
+
+class CreateOrderRequest(BaseModel):
+    cargo_name: str
+    cargo_category: str = "冷冻食品"
+    origin: str = ""
+    destination: str = ""
+    quantity: float = 0.0
+    unit: str = "kg"
+    temperature_requirement: str = ""
+    zone_name: str = ""
+    receiver: str = ""
+    receiver_phone: str = ""
+    notes: str = ""
+
+
+def _gen_order_id() -> str:
+    """生成运单号：WB + 日期 + 4位序列"""
+    _ORDER_SEQ["n"] += 1
+    seq = f"{_ORDER_SEQ['n']:04d}"
+    return f"WB{datetime.now().strftime('%Y%m%d')}{seq}"
+
+
+def _gen_trace_code() -> str:
+    """生成溯源码：CC + 日期 + 3位随机"""
+    import random
+    return f"CC{datetime.now().strftime('%m%d')}{random.randint(100, 999)}"
+
+
+def _calc_price(order: dict) -> float:
+    """根据温区与重量估算运费（演示用）"""
+    zone_factor = {"冷冻区": 3.2, "冷藏区": 2.6, "恒温区": 1.8}.get(order.get("zone_name", ""), 2.0)
+    base = 30.0
+    weight = order.get("quantity", 0) or 0
+    return round(base + weight * zone_factor, 2)
+
+
+@router.post("/create-order")
+async def create_order(
+    payload: CreateOrderRequest,
+    user: dict = Depends(get_current_user),
+):
+    """
+    客户移动端下单接口
+    写入内存订单表，生成运单号/溯源码，返回完整订单对象
+    """
+    shipper = user.get("sub", "customer01")
+    order_id = _gen_order_id()
+    trace_code = _gen_trace_code()
+    order = {
+        "order_id": order_id,
+        "waybill_id": order_id,
+        "trace_code": trace_code,
+        "shipper": shipper,
+        "cargo_name": payload.cargo_name,
+        "cargo_category": payload.cargo_category,
+        "origin": payload.origin,
+        "destination": payload.destination,
+        "quantity": payload.quantity,
+        "unit": payload.unit,
+        "temperature_requirement": payload.temperature_requirement,
+        "zone_name": payload.zone_name,
+        "receiver": payload.receiver,
+        "receiver_phone": payload.receiver_phone,
+        "notes": payload.notes,
+        "status": "pending",
+        "price": _calc_price(payload.dict()),
+        "driver_name": "",
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+    }
+    CUSTOMER_ORDERS[order_id] = order
+    return {"status": "ok", "order": order}
+
+
+@router.get("/my-orders-new")
+async def get_my_orders_new(
+    user: dict = Depends(get_current_user),
+):
+    """
+    客户移动端订单列表接口（与 create-order 配套）
+    返回当前客户名下订单（演示环境返回全部自建订单）
+    """
+    shipper = user.get("sub", "customer01")
+    results = [
+        o for o in CUSTOMER_ORDERS.values()
+        if o.get("shipper") == shipper or shipper == "admin"
+    ]
+    results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"count": len(results), "total": len(results), "orders": results}
 
 
 # ==================== 运单追踪接口（实时位置+温度） ====================
